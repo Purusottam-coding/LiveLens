@@ -332,28 +332,32 @@ export default function CameraPage() {
 
       {/* ── 2. PAIRED: Show Paired Status & Explicit "Start Broadcast" Button ── */}
       {status === 'paired' && (
-        <div className="relative z-10 flex-1 flex flex-col items-center justify-center p-8">
-          <div className="w-full max-w-sm bg-surface-800/90 backdrop-blur-xl border border-green-500/30 rounded-3xl p-8 shadow-2xl flex flex-col items-center gap-6 text-center">
-            <div className="w-20 h-20 rounded-3xl bg-green-500/20 border border-green-500/40 flex items-center justify-center shadow-lg shadow-green-500/20">
-              <ShieldCheck className="w-10 h-10 text-green-400" />
-            </div>
+        <div className="relative z-10 flex-1 flex flex-col items-center justify-center p-6 sm:p-8">
+          <div className="w-full max-w-sm bg-surface-800/90 backdrop-blur-xl border border-surface-700 rounded-3xl p-7 shadow-2xl flex flex-col items-center gap-6 text-center">
+            {/* Simple Paired Icon */}
+            <img
+              src="/paired-icon.png"
+              alt="Phone Paired"
+              className="w-20 h-20 object-contain"
+            />
 
             <div>
-              <h2 className="text-2xl font-bold text-white mb-1">Paired Successfully!</h2>
-              <p className="text-slate-400 text-sm">
-                Connected to Projector Code: <strong className="text-brand-400 font-mono tracking-widest">{code}</strong>
+              <h2 className="text-2xl font-bold text-white mb-1.5">Paired Successfully!</h2>
+              <p className="text-slate-300 text-sm">
+                Connected to Projector Code: <strong className="text-brand-400 font-mono tracking-widest text-base">{code}</strong>
               </p>
-              <p className="text-slate-500 text-xs mt-2">
+              <p className="text-slate-400 text-xs mt-2">
                 Click below to start live camera streaming
               </p>
             </div>
 
+            {/* Compact, balanced start button (no overly long border) */}
             <button
               onClick={handleStartBroadcast}
-              className="w-full flex items-center justify-center gap-3 px-6 py-4 rounded-2xl bg-green-500 hover:bg-green-600 active:scale-95 text-white font-bold text-lg transition-all duration-200 shadow-xl shadow-green-500/30"
+              className="inline-flex items-center justify-center gap-2.5 px-7 py-3.5 rounded-full bg-green-500 hover:bg-green-600 active:scale-95 text-white font-bold text-base transition-all duration-200 shadow-xl shadow-green-500/25"
             >
               <Play className="w-5 h-5 fill-current" />
-              Enable Camera & Start Live
+              <span>Enable Camera & Start Live</span>
             </button>
           </div>
         </div>
@@ -375,105 +379,105 @@ export default function CameraPage() {
       {/* ── Spacer for live view ── */}
       {isLive && !cameraError && <div className="flex-1" />}
 
-      {/* ── 3. STREAMING: Bottom Controls ── */}
+      {/* ── 3. STREAMING: Bottom Controls (No border, larger text) ── */}
       {isLive && !cameraError && (
-        <div className="fixed bottom-6 inset-x-0 z-20 flex items-center justify-center gap-2 sm:gap-3 px-3 pointer-events-auto flex-wrap">
+        <div className="fixed bottom-6 inset-x-0 z-20 flex items-center justify-center gap-3 px-4 pointer-events-auto flex-wrap">
           {/* Torch */}
           {isTorchSupported && (
             <button
               onClick={toggleTorch}
               title="Toggle flashlight"
-              className={`flex items-center gap-1.5 px-3.5 py-2.5 rounded-2xl font-semibold text-xs sm:text-sm backdrop-blur-md border shadow-lg transition-all ${
+              className={`flex items-center gap-2 px-5 py-3 rounded-full font-bold text-sm sm:text-base backdrop-blur-md shadow-xl transition-all active:scale-95 ${
                 isTorchOn
-                  ? 'bg-amber-400/20 border-amber-400/50 text-amber-300 shadow-amber-400/10'
-                  : 'bg-black/60 border-white/20 text-white/80 hover:bg-black/80'
+                  ? 'bg-amber-400 text-slate-950 shadow-amber-400/30'
+                  : 'bg-black/75 text-white hover:bg-black/90'
               }`}
             >
-              <span className="text-sm">🔦</span>
+              <span className="text-base">🔦</span>
               <span className="hidden sm:inline">{isTorchOn ? 'Flash On' : 'Flash Off'}</span>
             </button>
           )}
 
-          {/* Quick Rotate Button */}
+          {/* Quick Rotate Button (Border removed, larger text) */}
           <button
             onClick={() => handleRotate()}
             title="Rotate Video 90°"
-            className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-2xl bg-black/60 backdrop-blur-md border border-white/20 text-white/90 font-semibold text-xs sm:text-sm hover:bg-black/80 hover:text-white shadow-lg transition-all"
+            className="flex items-center gap-2 px-5 py-3 rounded-full bg-black/75 hover:bg-black/90 active:scale-95 backdrop-blur-md text-white font-bold text-sm sm:text-base shadow-xl transition-all"
           >
-            <RotateCw className="w-4 h-4 text-brand-400" />
+            <RotateCw className="w-5 h-5 text-brand-400" />
             <span>{videoTransform.rotation !== 0 ? `${videoTransform.rotation}°` : 'Rotate'}</span>
           </button>
 
-          {/* Quick Mirror Button */}
+          {/* Quick Mirror Button (Border removed, larger text) */}
           <button
             onClick={handleToggleMirrorX}
             title="Mirror / Flip Video"
-            className={`flex items-center gap-1.5 px-3.5 py-2.5 rounded-2xl backdrop-blur-md border shadow-lg transition-all text-xs sm:text-sm font-semibold ${
+            className={`flex items-center gap-2 px-5 py-3 rounded-full backdrop-blur-md shadow-xl transition-all font-bold text-sm sm:text-base active:scale-95 ${
               videoTransform.mirrorX
-                ? 'bg-brand-500/25 border-brand-500 text-brand-300'
-                : 'bg-black/60 border-white/20 text-white/90 hover:bg-black/80'
+                ? 'bg-brand-500 text-white shadow-brand-500/30'
+                : 'bg-black/75 text-white hover:bg-black/90'
             }`}
           >
-            <FlipHorizontal className="w-4 h-4 text-brand-400" />
+            <FlipHorizontal className="w-5 h-5" />
             <span>{videoTransform.mirrorX ? 'Mirrored' : 'Mirror'}</span>
           </button>
 
-          {/* Camera Settings / Switch button */}
+          {/* Camera Settings / Switch button (Border removed, larger text) */}
           <button
             onClick={() => setIsSettingsOpen(true)}
             title="Camera Settings"
-            className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-2xl bg-black/60 backdrop-blur-md border border-white/20 text-white/90 font-semibold text-xs sm:text-sm hover:bg-black/80 hover:text-white shadow-lg transition-all"
+            className="flex items-center gap-2 px-5 py-3 rounded-full bg-black/75 hover:bg-black/90 active:scale-95 backdrop-blur-md text-white font-bold text-sm sm:text-base shadow-xl transition-all"
           >
-            <Settings className="w-4 h-4 text-brand-400" />
+            <Settings className="w-5 h-5 text-brand-400" />
             <span>Settings</span>
           </button>
 
-          {/* Stop Broadcast */}
+          {/* Stop Broadcast (Border removed, larger text) */}
           <button
             onClick={handleStopBroadcast}
             title="Stop Broadcast"
-            className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-2xl bg-red-500/80 hover:bg-red-600 text-white font-semibold text-xs sm:text-sm shadow-lg transition-all"
+            className="flex items-center gap-2 px-6 py-3 rounded-full bg-red-500 hover:bg-red-600 active:scale-95 text-white font-bold text-sm sm:text-base shadow-xl shadow-red-500/30 transition-all"
           >
-            <Square className="w-3.5 h-3.5 fill-current" />
+            <Square className="w-4 h-4 fill-current" />
             <span>Stop</span>
           </button>
         </div>
       )}
 
-      {/* ── CAMERA SETTINGS MODAL ── */}
+      {/* ── CAMERA SETTINGS MODAL (Overhauled UI, Large Text, Clear Hierarchy) ── */}
       {isSettingsOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="w-full max-w-md bg-surface-900 border border-surface-700 rounded-3xl p-6 shadow-2xl flex flex-col gap-5 text-white max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="w-full max-w-lg bg-surface-900 border border-surface-700 rounded-3xl p-6 sm:p-7 shadow-2xl flex flex-col gap-6 text-white max-h-[90vh] overflow-y-auto">
             {/* Header */}
-            <div className="flex items-center justify-between pb-3 border-b border-surface-800">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-brand-500/20 border border-brand-500/30 flex items-center justify-center">
+            <div className="flex items-center justify-between pb-4 border-b border-surface-800">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-brand-500/20 flex items-center justify-center shrink-0">
                   <Sliders className="w-5 h-5 text-brand-400" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-bold">Camera Settings</h3>
-                  <p className="text-xs text-slate-400">Select source, orientation & mirror</p>
+                  <h3 className="text-xl font-bold text-white">Camera Settings</h3>
+                  <p className="text-sm text-slate-400">Select source, orientation & mirror</p>
                 </div>
               </div>
               <button
                 onClick={() => setIsSettingsOpen(false)}
-                className="p-2 rounded-xl bg-surface-800 hover:bg-surface-700 text-slate-400 hover:text-white transition-all"
+                className="p-2.5 rounded-2xl bg-surface-800 hover:bg-surface-700 text-slate-300 hover:text-white transition-all active:scale-95"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             {/* ── Video Orientation & Mirror Section ── */}
-            <div className="flex flex-col gap-3 p-4 rounded-2xl bg-surface-800/60 border border-surface-700">
+            <div className="flex flex-col gap-4 p-5 rounded-2xl bg-surface-800/80">
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <RotateCw className="w-4 h-4 text-brand-400" />
-                  <span className="text-sm font-semibold text-white">Rotation & Mirror</span>
+                <div className="flex items-center gap-2.5">
+                  <RotateCw className="w-5 h-5 text-brand-400" />
+                  <span className="text-base font-bold text-white">Rotation & Mirror</span>
                 </div>
-                {(videoTransform.rotation !== 0 || videoTransform.mirrorX || videoTransform.mirrorY) && (
+                {(videoTransform.rotation !== 0 || !videoTransform.mirrorX || videoTransform.mirrorY) && (
                   <button
                     onClick={handleResetTransform}
-                    className="text-xs text-brand-400 hover:text-brand-300 font-medium"
+                    className="text-sm text-brand-400 hover:text-brand-300 font-semibold"
                   >
                     Reset Normal
                   </button>
@@ -482,16 +486,16 @@ export default function CameraPage() {
 
               {/* Rotation angles: 0, 90, 180, 270 */}
               <div>
-                <span className="text-xs text-slate-400 block mb-2">Rotate Angle:</span>
-                <div className="grid grid-cols-4 gap-2">
+                <span className="text-sm font-semibold text-slate-300 block mb-2.5">Rotate Angle:</span>
+                <div className="grid grid-cols-4 gap-2.5">
                   {[0, 90, 180, 270].map((deg) => (
                     <button
                       key={deg}
                       onClick={() => handleRotate(deg)}
-                      className={`py-2 rounded-xl text-xs font-bold border transition-all ${
+                      className={`py-3 rounded-xl text-sm sm:text-base font-bold transition-all ${
                         videoTransform.rotation === deg
-                          ? 'bg-brand-500 border-brand-400 text-white shadow-md shadow-brand-500/20'
-                          : 'bg-surface-700/80 border-surface-600 text-slate-300 hover:bg-surface-700 hover:text-white'
+                          ? 'bg-brand-500 text-white shadow-lg shadow-brand-500/30'
+                          : 'bg-surface-700 text-slate-300 hover:bg-surface-650 hover:text-white'
                       }`}
                     >
                       {deg}°
@@ -501,118 +505,120 @@ export default function CameraPage() {
               </div>
 
               {/* Mirror Horizontal & Vertical toggles */}
-              <div className="grid grid-cols-2 gap-2 pt-1">
+              <div className="grid grid-cols-2 gap-3 pt-1">
                 <button
                   onClick={handleToggleMirrorX}
-                  className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl border text-xs font-semibold transition-all ${
+                  className={`flex items-center justify-center gap-2.5 py-3.5 px-4 rounded-xl text-sm sm:text-base font-bold transition-all ${
                     videoTransform.mirrorX
-                      ? 'bg-brand-500/25 border-brand-500 text-brand-300'
-                      : 'bg-surface-700/80 border-surface-600 text-slate-300 hover:bg-surface-700 hover:text-white'
+                      ? 'bg-brand-500 text-white shadow-lg shadow-brand-500/25'
+                      : 'bg-surface-700 text-slate-300 hover:bg-surface-650 hover:text-white'
                   }`}
                 >
-                  <FlipHorizontal className="w-4 h-4" />
-                  <span>Mirror (Flip H)</span>
+                  <FlipHorizontal className="w-5 h-5" />
+                  <span>Mirror (Horizontal)</span>
                   {videoTransform.mirrorX && (
-                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-brand-500 text-white font-bold">ON</span>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-white/20 text-white font-extrabold">ON</span>
                   )}
                 </button>
 
                 <button
                   onClick={handleToggleMirrorY}
-                  className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl border text-xs font-semibold transition-all ${
+                  className={`flex items-center justify-center gap-2.5 py-3.5 px-4 rounded-xl text-sm sm:text-base font-bold transition-all ${
                     videoTransform.mirrorY
-                      ? 'bg-brand-500/25 border-brand-500 text-brand-300'
-                      : 'bg-surface-700/80 border-surface-600 text-slate-300 hover:bg-surface-700 hover:text-white'
+                      ? 'bg-brand-500 text-white shadow-lg shadow-brand-500/25'
+                      : 'bg-surface-700 text-slate-300 hover:bg-surface-650 hover:text-white'
                   }`}
                 >
-                  <FlipVertical className="w-4 h-4" />
-                  <span>Flip Vertical</span>
+                  <FlipVertical className="w-5 h-5" />
+                  <span>Flip (Vertical)</span>
                   {videoTransform.mirrorY && (
-                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-brand-500 text-white font-bold">ON</span>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-white/20 text-white font-extrabold">ON</span>
                   )}
                 </button>
               </div>
             </div>
 
             {/* ── Camera Source Selection ── */}
-            <div className="flex flex-col gap-2.5">
-              <div className="flex items-center justify-between text-xs font-semibold text-slate-400 uppercase tracking-wider px-1">
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center justify-between text-sm font-bold text-slate-300 uppercase tracking-wider px-1">
                 <span>Select Camera Source ({devices.length})</span>
                 <button
                   onClick={handleRefreshCameras}
                   disabled={isRefreshing}
-                  className="flex items-center gap-1.5 text-brand-400 hover:text-brand-300 normal-case font-medium text-xs transition"
+                  className="flex items-center gap-2 text-brand-400 hover:text-brand-300 normal-case font-bold text-sm transition"
                   title="Rescan cameras"
                 >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+                  <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
                   Refresh
                 </button>
               </div>
 
               {devices.length === 0 ? (
-                <div className="p-4 rounded-2xl bg-surface-800/60 border border-surface-700 text-center text-sm text-slate-400">
-                  <Camera className="w-8 h-8 text-slate-500 mx-auto mb-2" />
-                  <p>No external cameras detected yet.</p>
-                  <p className="text-xs text-slate-500 mt-1">If using Iriun Webcam, make sure it is open and click Refresh.</p>
+                <div className="p-5 rounded-2xl bg-surface-800/80 text-center text-base text-slate-300">
+                  <Camera className="w-10 h-10 text-slate-500 mx-auto mb-2.5" />
+                  <p className="font-semibold">No external cameras detected yet.</p>
+                  <p className="text-xs text-slate-400 mt-1">If using Iriun Webcam, make sure it is open and click Refresh.</p>
                 </div>
               ) : (
-                devices.map((device, idx) => {
-                  const isCurrent = device.deviceId === selectedDeviceId;
-                  const camNumber = idx + 1;
-                  return (
-                    <button
-                      key={device.deviceId || idx}
-                      onClick={() => {
-                        selectCamera(device.deviceId);
-                        setIsSettingsOpen(false);
-                      }}
-                      className={`flex items-center justify-between p-3.5 rounded-2xl border text-left transition-all ${
-                        isCurrent
-                          ? 'bg-brand-500/15 border-brand-500 shadow-md shadow-brand-500/10'
-                          : 'bg-surface-800 hover:bg-surface-750 border-surface-700 hover:border-slate-500'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3 min-w-0 pr-2">
-                        <div
-                          className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-xs shrink-0 ${
-                            isCurrent
-                              ? 'bg-brand-500 text-white'
-                              : 'bg-surface-700 text-slate-300'
-                          }`}
-                        >
-                          {camNumber}
+                <div className="flex flex-col gap-2.5">
+                  {devices.map((device, idx) => {
+                    const isCurrent = device.deviceId === selectedDeviceId;
+                    const camNumber = idx + 1;
+                    return (
+                      <button
+                        key={device.deviceId || idx}
+                        onClick={() => {
+                          selectCamera(device.deviceId);
+                          setIsSettingsOpen(false);
+                        }}
+                        className={`flex items-center justify-between p-4 rounded-2xl text-left transition-all ${
+                          isCurrent
+                            ? 'bg-brand-500/20 border-2 border-brand-500 shadow-lg shadow-brand-500/10'
+                            : 'bg-surface-800 hover:bg-surface-750 border border-surface-700/80'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3.5 min-w-0 pr-3">
+                          <div
+                            className={`w-11 h-11 rounded-xl flex items-center justify-center font-bold text-sm shrink-0 ${
+                              isCurrent
+                                ? 'bg-brand-500 text-white'
+                                : 'bg-surface-700 text-slate-300'
+                            }`}
+                          >
+                            {camNumber}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="font-bold text-base text-white truncate">
+                              {device.label || `Camera ${camNumber}`}
+                            </p>
+                            <p className="text-xs sm:text-sm text-slate-400 mt-0.5">
+                              {isCurrent ? 'Currently Connected' : 'Tap to switch'}
+                            </p>
+                          </div>
                         </div>
-                        <div className="min-w-0">
-                          <p className="font-semibold text-sm text-white truncate">
-                            {device.label || `Camera ${camNumber}`}
-                          </p>
-                          <p className="text-xs text-slate-400">
-                            {isCurrent ? 'Currently Connected' : 'Click to switch'}
-                          </p>
-                        </div>
-                      </div>
 
-                      {isCurrent ? (
-                        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-green-500/20 text-green-400 text-xs font-semibold shrink-0">
-                          <Check className="w-3.5 h-3.5" />
-                          <span>Active</span>
-                        </div>
-                      ) : (
-                        <span className="text-xs text-slate-400 group-hover:text-white shrink-0">
-                          Switch →
-                        </span>
-                      )}
-                    </button>
-                  );
-                })
+                        {isCurrent ? (
+                          <div className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-green-500 text-white text-xs font-bold shrink-0 shadow-md shadow-green-500/20">
+                            <Check className="w-4 h-4 stroke-[3]" />
+                            <span>Active</span>
+                          </div>
+                        ) : (
+                          <span className="text-sm font-semibold text-brand-400 group-hover:text-brand-300 shrink-0 px-3 py-1.5 rounded-xl bg-surface-700">
+                            Switch →
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
               )}
             </div>
 
             {/* Stream info */}
             {currentResolution && (
-              <div className="p-3 rounded-2xl bg-surface-800/60 border border-surface-700 text-xs text-slate-400 flex items-center justify-between">
-                <span>Active Resolution:</span>
-                <span className="font-mono text-white font-medium">
+              <div className="p-4 rounded-2xl bg-surface-800/80 flex items-center justify-between">
+                <span className="text-sm font-semibold text-slate-300">Active Resolution:</span>
+                <span className="font-mono text-white font-bold text-base">
                   {currentResolution.width} × {currentResolution.height}
                   {currentResolution.frameRate ? ` @ ${currentResolution.frameRate}fps` : ''}
                 </span>
@@ -626,16 +632,16 @@ export default function CameraPage() {
                   switchCamera();
                   setIsSettingsOpen(false);
                 }}
-                className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-surface-800 hover:bg-surface-700 border border-surface-700 text-white text-sm font-semibold transition"
+                className="w-full flex items-center justify-center gap-2.5 py-3.5 rounded-2xl bg-surface-800 hover:bg-surface-750 text-white text-base font-bold transition active:scale-95"
               >
-                <FlipHorizontal2 className="w-4 h-4 text-brand-400" />
+                <FlipHorizontal2 className="w-5 h-5 text-brand-400" />
                 Cycle to Next Camera
               </button>
             )}
 
             <button
               onClick={() => setIsSettingsOpen(false)}
-              className="w-full py-3 rounded-xl bg-brand-500 hover:bg-brand-600 text-white font-bold text-sm transition"
+              className="w-full py-4 rounded-2xl bg-brand-500 hover:bg-brand-600 active:scale-95 text-white font-bold text-lg transition shadow-xl shadow-brand-500/25"
             >
               Done
             </button>

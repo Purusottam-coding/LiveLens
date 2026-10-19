@@ -7,7 +7,6 @@ import {
   Check,
   Maximize2,
   Wifi,
-  Smartphone,
   ShieldCheck,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -233,15 +232,12 @@ export default function DisplayPage() {
         {isPhonePaired && status !== 'connected' && (
           <div className="fixed inset-0 z-30 flex items-center justify-center p-6 bg-black/75 backdrop-blur-md animate-in fade-in zoom-in-95 duration-300">
             <div className="w-full max-w-lg bg-surface-800/95 border-2 border-green-500/50 rounded-3xl p-8 sm:p-10 shadow-2xl shadow-green-500/10 flex flex-col items-center gap-6 text-center">
-              {/* Pulsing Icon */}
-              <div className="relative">
-                <div className="w-24 h-24 rounded-3xl bg-green-500/20 border border-green-500/40 flex items-center justify-center shadow-xl shadow-green-500/20">
-                  <Smartphone className="w-12 h-12 text-green-400" />
-                </div>
-                <div className="absolute -top-1 -right-1 w-7 h-7 rounded-full bg-green-500 border-2 border-surface-900 flex items-center justify-center shadow">
-                  <Check className="w-4 h-4 text-white font-bold" />
-                </div>
-              </div>
+              {/* Simple Paired Icon */}
+              <img
+                src="/paired-icon.png"
+                alt="Phone Paired"
+                className="w-24 h-24 object-contain"
+              />
 
               {/* Badge & Title */}
               <div>
