@@ -2,16 +2,16 @@ import { useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 
 export function getSocketUrl(): string {
+  const envUrl = import.meta.env.VITE_SOCKET_URL;
+  if (envUrl && typeof envUrl === 'string' && envUrl.trim()) {
+    return envUrl.trim().replace(/\/$/, '');
+  }
   if (typeof window !== 'undefined') {
     const hostname = window.location.hostname;
     const protocol = window.location.protocol;
-    const envUrl = import.meta.env.VITE_SOCKET_URL;
-    if (envUrl && !envUrl.includes('localhost') && !envUrl.includes('127.0.0.1')) {
-      return envUrl;
-    }
     return `${protocol}//${hostname}:3001`;
   }
-  return import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001';
+  return 'http://localhost:3001';
 }
 
 // Module-level singleton map by URL so it survives component re-renders

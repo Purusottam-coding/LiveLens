@@ -13,7 +13,7 @@ import { useNavigate } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { useWebRTC } from '@/hooks/useWebRTC';
 import { useSocket } from '@/hooks/useSocket';
-import { createSession } from '@/services/api';
+import { createSession, getApiBaseUrl } from '@/services/api';
 import type { Session, VideoTransform } from '@/types';
 
 type Status = 'creating' | 'waiting' | 'connected' | 'error';
@@ -74,7 +74,11 @@ export default function DisplayPage() {
   useEffect(() => {
     createSession()
       .then((s) => { setSession(s); setStatus('waiting'); })
-      .catch(() => { setError('Failed to create session. Is the backend running?'); setStatus('error'); });
+      .catch((err) => { 
+        console.error('Session creation failed:', err);
+        setError(err.message || 'Failed to create session. Is the backend running?'); 
+        setStatus('error'); 
+      });
   }, []);
 
   const copyCode = useCallback(() => {
@@ -143,20 +147,40 @@ export default function DisplayPage() {
 
         {/* Error */}
         {status === 'error' && (
-          <div className="flex flex-col items-center gap-6 max-w-sm text-center">
+          <div className="flex flex-col items-center gap-6 max-w-md text-center px-4">
             <div className="w-20 h-20 rounded-3xl bg-red-500/15 border border-red-500/30 flex items-center justify-center">
               <AlertCircle className="w-10 h-10 text-red-400" />
             </div>
             <div>
-              <h3 className="text-xl font-semibold text-white mb-2">Session Error</h3>
-              <p className="text-red-400 text-sm">{error}</p>
+              <h3 className="text-xl font-semibold text-white mb-2">Backend Connection Error</h3>
+              <p className="text-red-400 text-sm mb-3 leading-relaxed">{error}</p>
+              <p className="text-slate-400 text-xs">
+                Backend target: <code className="text-slate-300 font-mono bg-surface-800 px-2 py-0.5 rounded border border-surface-700">{getApiBaseUrl()}</code>
+              </p>
             </div>
-            <button
-              onClick={() => navigate('/')}
-              className="px-6 py-3 rounded-xl bg-surface-700 text-white font-medium hover:bg-surface-600 transition"
-            >
-              Go Home
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => {
+                  setStatus('creating');
+                  setError('');
+                  createSession()
+                    .then((s) => { setSession(s); setStatus('waiting'); })
+                    .catch((err) => { 
+                      setError(err.message || 'Failed to create session.'); 
+                      setStatus('error'); 
+                    });
+                }}
+                className="px-6 py-3 rounded-xl bg-brand-500 hover:bg-brand-600 active:scale-95 text-white font-medium transition"
+              >
+                Retry
+              </button>
+              <button
+                onClick={() => navigate('/')}
+                className="px-6 py-3 rounded-xl bg-surface-700 text-white font-medium hover:bg-surface-600 active:scale-95 transition"
+              >
+                Go Home
+              </button>
+            </div>
           </div>
         )}
 
