@@ -5,34 +5,45 @@ export function getApiBaseUrl(): string {
   if (envUrl && typeof envUrl === 'string' && envUrl.trim()) {
     return envUrl.trim().replace(/\/$/, '');
   }
-  if (typeof window !== 'undefined') {
-    const hostname = window.location.hostname;
-    const protocol = window.location.protocol;
-    return `${protocol}//${hostname}:3001`;
-  }
-  return 'http://localhost:3001';
+  return '';
 }
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const baseUrl = getApiBaseUrl();
+  const fullUrl = baseUrl ? `${baseUrl}${path}` : path;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 12000); // 12-second timeout
 
   try {
-    const res = await fetch(`${baseUrl}${path}`, {
+    const res = await fetch(fullUrl, {
       headers: { 'Content-Type': 'application/json' },
       signal: controller.signal,
       ...options,
     });
 
-    const json = await res.json();
-    if (!res.ok) {
-      throw new Error(json.message || `HTTP ${res.status}`);
+    const text = await res.text();
+    let json: any = null;
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch {
+      // response is not JSON (e.g. 404 HTML or empty)
     }
+
+    if (!res.ok) {
+      const errorMsg = json?.message || (res.status === 404 
+        ? `Backend API not found (${res.status}) at ${fullUrl || window.location.origin + path}. Is backend running?`
+        : `HTTP ${res.status}: ${text.slice(0, 100)}`);
+      throw new Error(errorMsg);
+    }
+
+    if (!json) {
+      throw new Error(`Server returned empty response from ${fullUrl || window.location.origin + path}`);
+    }
+
     return json as T;
   } catch (err: any) {
     if (err.name === 'AbortError') {
-      throw new Error(`Connection timed out contacting backend at ${baseUrl}. Backend might be asleep or unreachable.`);
+      throw new Error(`Connection timed out contacting backend at ${baseUrl || window.location.origin}.`);
     }
     throw err;
   } finally {
@@ -53,6 +64,14 @@ export async function joinSession(code: string): Promise<Session> {
   const data = await apiFetch<{ success: boolean; session: Session }>('/api/sessions/join', {
     method: 'POST',
     body: JSON.stringify({ code }),
+  });
+  return data.session;
+}
+
+/** Fetch session status by ID. */
+export async function getSession(sessionId: string): Promise<Session> {
+  const data = await apiFetch<{ success: boolean; session: Session }>(`/api/sessions/${sessionId}`, {
+    method: 'GET',
   });
   return data.session;
 }

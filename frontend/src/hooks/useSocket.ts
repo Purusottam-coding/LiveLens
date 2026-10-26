@@ -1,4 +1,3 @@
-import { useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 
 export function getSocketUrl(): string {
@@ -6,21 +5,16 @@ export function getSocketUrl(): string {
   if (envUrl && typeof envUrl === 'string' && envUrl.trim()) {
     return envUrl.trim().replace(/\/$/, '');
   }
-  if (typeof window !== 'undefined') {
-    const hostname = window.location.hostname;
-    const protocol = window.location.protocol;
-    return `${protocol}//${hostname}:3001`;
-  }
-  return 'http://localhost:3001';
+  return '';
 }
 
-// Module-level singleton map by URL so it survives component re-renders
+// Module-level singleton so the socket connection persists cleanly across components and re-renders
 let socketSingleton: Socket | null = null;
 let currentSocketUrl: string = '';
 
-function getSocket(): Socket {
+export function getSocket(): Socket {
   const targetUrl = getSocketUrl();
-  if (!socketSingleton || currentSocketUrl !== targetUrl || !socketSingleton.connected) {
+  if (!socketSingleton || currentSocketUrl !== targetUrl) {
     if (socketSingleton) {
       socketSingleton.disconnect();
     }
@@ -31,16 +25,18 @@ function getSocket(): Socket {
       reconnectionDelayMax: 5000,
       autoConnect: true,
     });
+
+    socketSingleton.on('connect', () => {
+      console.log(`[Socket] Connected to server: ${socketSingleton?.id}`);
+    });
+
+    socketSingleton.on('disconnect', (reason) => {
+      console.log(`[Socket] Disconnected: ${reason}`);
+    });
   }
   return socketSingleton;
 }
 
 export function useSocket(): Socket {
-  const socketRef = useRef<Socket>(getSocket());
-
-  useEffect(() => {
-    // Keep socket alive across routes
-  }, []);
-
-  return socketRef.current;
+  return getSocket();
 }

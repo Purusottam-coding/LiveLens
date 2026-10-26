@@ -8,12 +8,13 @@ import {
   Maximize2,
   Wifi,
   ShieldCheck,
+  RefreshCw,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { useWebRTC } from '@/hooks/useWebRTC';
 import { useSocket } from '@/hooks/useSocket';
-import { createSession, getApiBaseUrl } from '@/services/api';
+import { createSession, getSession, getApiBaseUrl } from '@/services/api';
 import type { Session, VideoTransform } from '@/types';
 
 type Status = 'creating' | 'waiting' | 'connected' | 'error';
@@ -30,8 +31,9 @@ export default function DisplayPage() {
   const [isPhonePaired, setIsPhonePaired] = useState(false);
   const [videoTransform, setVideoTransform] = useState<VideoTransform>({
     rotation: 0,
-    mirrorX: true,
+    mirrorX: false,
     mirrorY: false,
+    zoom: 1,
   });
 
   const socket = useSocket();
@@ -71,15 +73,101 @@ export default function DisplayPage() {
     onVideoTransform: setVideoTransform,
   });
 
-  useEffect(() => {
-    createSession()
-      .then((s) => { setSession(s); setStatus('waiting'); })
-      .catch((err) => { 
-        console.error('Session creation failed:', err);
-        setError(err.message || 'Failed to create session. Is the backend running?'); 
-        setStatus('error'); 
-      });
+  const initSession = useCallback(async (forceNew = false) => {
+    setStatus('creating');
+    setError('');
+
+    const STORAGE_KEY = 'livelens_viewer_session';
+
+    if (!forceNew) {
+      try {
+        const saved = localStorage.getItem(STORAGE_KEY);
+        if (saved) {
+          const parsed: Session = JSON.parse(saved);
+          if (parsed && parsed.id && parsed.viewerToken) {
+            // Check if backend still has this session active
+            const remote = await getSession(parsed.id);
+            if (remote && remote.status !== 'ended') {
+              console.log('[Display] Restoring active session across refresh:', parsed.code);
+              setSession(parsed);
+              setStatus('waiting');
+              if (remote.status === 'connected') {
+                setIsPhonePaired(true);
+              }
+              return;
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[Display] Session check failed, creating new one', err);
+        localStorage.removeItem(STORAGE_KEY);
+      }
+    }
+
+    try {
+      const s = await createSession();
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+      setSession(s);
+      setStatus('waiting');
+      setIsPhonePaired(false);
+    } catch (err: any) {
+      console.error('Session creation failed:', err);
+      setError(err.message || 'Failed to create session. Is the backend running?');
+      setStatus('error');
+    }
   }, []);
+
+  useEffect(() => {
+    initSession(false);
+  }, [initSession]);
+
+  // Guarantee pairing detection: check session status every 2 seconds while waiting
+  useEffect(() => {
+    if (!session || status !== 'waiting' || isPhonePaired) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const s = await getSession(session.id);
+        if (s.status === 'connected') {
+          console.log('[Display] Detected phone paired via session check');
+          setIsPhonePaired(true);
+        }
+      } catch (err) {
+        // Silently retry
+      }
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [session, status, isPhonePaired]);
+
+  // Direct socket event listeners for instant pairing popup
+  useEffect(() => {
+    if (!socket || !session) return;
+
+    const handleSignal = (data: { type: string }) => {
+      if (data.type === 'phone-paired') {
+        console.log('[Display] Received phone-paired signal directly');
+        setIsPhonePaired(true);
+      }
+    };
+
+    const handlePeerJoined = (data: { role: string }) => {
+      if (data.role === 'broadcaster') {
+        console.log('[Display] Broadcaster peer joined directly');
+        setIsPhonePaired(true);
+      }
+    };
+
+    socket.on('signal', handleSignal);
+    socket.on('peer-joined', handlePeerJoined);
+    socket.on('phone-paired', () => setIsPhonePaired(true));
+
+    return () => {
+      socket.off('signal', handleSignal);
+      socket.off('peer-joined', handlePeerJoined);
+      socket.off('phone-paired');
+    };
+  }, [socket, session]);
 
   const copyCode = useCallback(() => {
     if (!session) return;
@@ -109,8 +197,8 @@ export default function DisplayPage() {
         playsInline
         muted
         style={{
-          transform: `rotate(${videoTransform.rotation}deg) scaleX(${videoTransform.mirrorX ? -1 : 1}) scaleY(${videoTransform.mirrorY ? -1 : 1})`,
-          transition: 'transform 0.3s ease',
+          transform: `rotate(${videoTransform.rotation}deg) scaleX(${videoTransform.mirrorX ? -1 : 1}) scaleY(${videoTransform.mirrorY ? -1 : 1}) scale(${videoTransform.zoom || 1})`,
+          transition: 'transform 0.2s ease-out',
         }}
         className={`fixed inset-0 w-full h-full object-contain bg-black transition-opacity duration-700 ${
           status === 'connected' ? 'opacity-100 z-10' : 'opacity-0 pointer-events-none'
@@ -155,21 +243,12 @@ export default function DisplayPage() {
               <h3 className="text-xl font-semibold text-white mb-2">Backend Connection Error</h3>
               <p className="text-red-400 text-sm mb-3 leading-relaxed">{error}</p>
               <p className="text-slate-400 text-xs">
-                Backend target: <code className="text-slate-300 font-mono bg-surface-800 px-2 py-0.5 rounded border border-surface-700">{getApiBaseUrl()}</code>
+                Backend target: <code className="text-slate-300 font-mono bg-surface-800 px-2 py-0.5 rounded border border-surface-700">{getApiBaseUrl() || `${window.location.origin} (current domain)`}</code>
               </p>
             </div>
             <div className="flex items-center gap-3">
               <button
-                onClick={() => {
-                  setStatus('creating');
-                  setError('');
-                  createSession()
-                    .then((s) => { setSession(s); setStatus('waiting'); })
-                    .catch((err) => { 
-                      setError(err.message || 'Failed to create session.'); 
-                      setStatus('error'); 
-                    });
-                }}
+                onClick={() => initSession(true)}
                 className="px-6 py-3 rounded-xl bg-brand-500 hover:bg-brand-600 active:scale-95 text-white font-medium transition"
               >
                 Retry
@@ -216,6 +295,13 @@ export default function DisplayPage() {
                       ? <Check className="w-6 h-6 text-green-400" />
                       : <Copy className="w-6 h-6" />
                     }
+                  </button>
+                  <button
+                    onClick={() => initSession(true)}
+                    title="Generate New Code"
+                    className="p-3 rounded-2xl bg-surface-700 hover:bg-surface-600 border border-surface-600 text-slate-400 hover:text-white transition-all active:scale-95"
+                  >
+                    <RefreshCw className="w-6 h-6" />
                   </button>
                 </div>
                 <p className="text-slate-600 text-sm tracking-widest uppercase">

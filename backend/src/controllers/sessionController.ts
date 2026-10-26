@@ -29,6 +29,14 @@ export const sessionController = {
       return res.status(404).json({ success: false, message: 'Session not found or already ended.' });
     }
 
+    // Notify projector/viewer in the room immediately via Socket.io
+    const io = req.app.get('io');
+    if (io) {
+      console.log(`[sessionController] Broadcasting phone-paired to room: ${session.id}`);
+      io.to(session.id).emit('peer-joined', { role: 'broadcaster' });
+      io.to(session.id).emit('signal', { type: 'phone-paired', payload: {} });
+    }
+
     return res.json({
       success: true,
       session: {
@@ -36,6 +44,23 @@ export const sessionController = {
         code: session.code,
         status: session.status,
         phoneToken: session.phoneToken, // only the broadcaster (phone) receives this
+      },
+    });
+  },
+
+  /** GET /api/sessions/:id — check session status */
+  get(req: Request, res: Response) {
+    const { id } = req.params;
+    const session = sessionService.getById(id);
+    if (!session) {
+      return res.status(404).json({ success: false, message: 'Session not found or already ended.' });
+    }
+    return res.json({
+      success: true,
+      session: {
+        id: session.id,
+        code: session.code,
+        status: session.status,
       },
     });
   },

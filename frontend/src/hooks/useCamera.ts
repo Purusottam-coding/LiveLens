@@ -1,7 +1,17 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 
-type FacingMode = 'user' | 'environment';
+export type FacingMode = 'user' | 'environment';
 type Quality = 'auto' | '480p' | '720p' | '1080p';
+
+export function isFrontDevice(device: MediaDeviceInfo): boolean {
+  const label = (device.label || '').toLowerCase();
+  return /front|user|facetime|selfie/i.test(label);
+}
+
+export function isBackDevice(device: MediaDeviceInfo): boolean {
+  const label = (device.label || '').toLowerCase();
+  return /back|rear|environment/i.test(label);
+}
 
 const QUALITY_CONSTRAINTS: Record<Quality, { width: number; height: number; frameRate: number }> = {
   auto: { width: 1920, height: 1080, frameRate: 60 },
@@ -19,9 +29,11 @@ export function useCamera({ enabled, quality }: UseCameraOptions) {
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
+  const [activeDeviceId, setActiveDeviceId] = useState<string>('');
   const [facingMode, setFacingMode] = useState<FacingMode>('environment');
   const [isTorchOn, setIsTorchOn] = useState(false);
   const [isTorchSupported, setIsTorchSupported] = useState(false);
+  const [zoomCapabilities, setZoomCapabilities] = useState<{ min: number; max: number; step: number } | null>(null);
   const [currentResolution, setCurrentResolution] = useState<{
     width: number;
     height: number;
@@ -113,14 +125,37 @@ export function useCamera({ enabled, quality }: UseCameraOptions) {
           });
         }
 
-        if (activeSettings?.deviceId && !selectedDeviceId) {
-          setSelectedDeviceId(activeSettings.deviceId);
+        if (activeSettings?.deviceId) {
+          setActiveDeviceId(activeSettings.deviceId);
         }
 
-        // Check torch support
-        const caps = activeTrack.getCapabilities?.() as MediaTrackCapabilities & { torch?: boolean };
+        // Detect active facing mode
+        if (activeSettings?.facingMode === 'user' || activeSettings?.facingMode === 'environment') {
+          setFacingMode(activeSettings.facingMode as FacingMode);
+        } else if (activeSettings?.deviceId) {
+          const currentDev = vDevices.find((d) => d.deviceId === activeSettings.deviceId);
+          if (currentDev) {
+            if (isFrontDevice(currentDev)) {
+              setFacingMode('user');
+            } else if (isBackDevice(currentDev)) {
+              setFacingMode('environment');
+            }
+          }
+        }
+
+        // Check torch & zoom support
+        const caps = activeTrack.getCapabilities?.() as MediaTrackCapabilities & { 
+          torch?: boolean; 
+          zoom?: { min: number; max: number; step: number };
+        };
         setIsTorchSupported(!!caps?.torch);
         setIsTorchOn(false);
+
+        if (caps?.zoom && typeof caps.zoom.min === 'number' && typeof caps.zoom.max === 'number') {
+          setZoomCapabilities(caps.zoom);
+        } else {
+          setZoomCapabilities(null);
+        }
       })
       .catch((err: Error) => {
         if (err.name === 'NotAllowedError') {
@@ -138,19 +173,38 @@ export function useCamera({ enabled, quality }: UseCameraOptions) {
   const selectCamera = useCallback((deviceId: string) => {
     setSelectedDeviceId(deviceId);
     setIsTorchOn(false);
-  }, []);
+    const chosen = devices.find((d) => d.deviceId === deviceId);
+    if (chosen) {
+      if (isFrontDevice(chosen)) {
+        setFacingMode('user');
+      } else if (isBackDevice(chosen)) {
+        setFacingMode('environment');
+      }
+    }
+  }, [devices]);
 
-  const switchCamera = useCallback(() => {
-    if (devices.length > 1) {
-      const currentIndex = devices.findIndex((d) => d.deviceId === selectedDeviceId);
-      const nextIndex = (currentIndex + 1) % devices.length;
-      setSelectedDeviceId(devices[nextIndex].deviceId);
+  const setCameraFacing = useCallback((targetFacing: FacingMode) => {
+    setFacingMode(targetFacing);
+    setIsTorchOn(false);
+
+    // Try finding matching device in current enumerated devices
+    const isTargetUser = targetFacing === 'user';
+    const matchingDevice = devices.find((d) =>
+      isTargetUser ? isFrontDevice(d) : isBackDevice(d)
+    );
+
+    if (matchingDevice) {
+      setSelectedDeviceId(matchingDevice.deviceId);
     } else {
-      setFacingMode((prev) => (prev === 'user' ? 'environment' : 'user'));
+      // Clear selectedDeviceId so getUserMedia requests ideal: targetFacing
       setSelectedDeviceId('');
     }
-    setIsTorchOn(false);
-  }, [devices, selectedDeviceId]);
+  }, [devices]);
+
+  const switchCamera = useCallback(() => {
+    const nextFacing: FacingMode = facingMode === 'user' ? 'environment' : 'user';
+    setCameraFacing(nextFacing);
+  }, [facingMode, setCameraFacing]);
 
   const toggleTorch = useCallback(async () => {
     const track = streamRef.current?.getVideoTracks()[0];
@@ -166,17 +220,38 @@ export function useCamera({ enabled, quality }: UseCameraOptions) {
     }
   }, [isTorchOn]);
 
+  const applyHardwareZoom = useCallback(async (zoomValue: number) => {
+    const track = streamRef.current?.getVideoTracks()[0];
+    if (!track) return false;
+    try {
+      const caps = track.getCapabilities?.() as any;
+      if (caps && 'zoom' in caps) {
+        await track.applyConstraints({
+          advanced: [{ zoom: zoomValue } as any],
+        });
+        return true;
+      }
+    } catch (err) {
+      console.debug('Hardware zoom constraint not supported or failed', err);
+    }
+    return false;
+  }, []);
+
   return {
     stream,
     devices,
-    selectedDeviceId,
+    selectedDeviceId: selectedDeviceId || activeDeviceId,
     selectCamera,
     setSelectedDeviceId,
     refreshDevices,
     switchCamera,
+    facingMode,
+    setCameraFacing,
     isTorchOn,
     toggleTorch,
     isTorchSupported,
+    zoomCapabilities,
+    applyHardwareZoom,
     cameraError,
     currentResolution,
   };

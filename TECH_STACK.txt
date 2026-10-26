@@ -1,0 +1,88 @@
+================================================================================
+                    LIVELENS - PROJECT TECH STACK & ARCHITECTURE
+================================================================================
+
+1. PROJECT OVERVIEW
+--------------------------------------------------------------------------------
+LiveLens is a real-time, low-latency web application designed to turn any smartphone 
+into a wireless document camera or live video feed for projectors and external displays 
+over a local Wi-Fi network without requiring native mobile app installations.
+
+
+2. CORE STREAMING & REAL-TIME NETWORKING
+--------------------------------------------------------------------------------
+* WebRTC (Web Real-Time Communication):
+  - Component: RTCPeerConnection, RTCSessionDescription, RTCIceCandidate
+  - Purpose: Ultra-low latency, peer-to-peer (P2P) direct audio/video streaming 
+    from phone camera directly to projector display.
+  - Video data travels directly device-to-device over local Wi-Fi without passing 
+    through any intermediate cloud servers.
+
+* Socket.io (WebSocket Signaling):
+  - Purpose: Real-time bidirectional signaling channel.
+  - Exchanging WebRTC session descriptions (SDP Offer / Answer) and ICE candidates.
+  - Room management based on 6-digit session codes.
+  - Instant synchronization of camera commands (Zoom, Rotation, Mirroring, Flash).
+
+* STUN Servers:
+  - Google STUN (stun:stun.l.google.com:19302, stun:stun1.l.google.com:19302)
+  - Twilio STUN (stun:global.stun.twilio.com:3478)
+  - Purpose: NAT traversal and discovering public/local candidate IPs for direct P2P link.
+
+
+3. FRONTEND ARCHITECTURE
+--------------------------------------------------------------------------------
+* Framework & Language:
+  - React 18 / 19
+  - TypeScript (strict type checking)
+
+* Build Tool & Dev Server:
+  - Vite 5 (high-performance ES modules build system)
+  - @vitejs/plugin-basic-ssl: Automatic SSL certificate generation for local HTTPS 
+    (mandatory for mobile browsers like Android Chrome and iOS Safari to grant 
+    camera access via getUserMedia over LAN IP).
+
+* Styling & UI:
+  - Tailwind CSS v4 (responsive utility-first styling, dark mode theme)
+  - Lucide React (modern, clean SVG icons for camera, zoom, flip, settings)
+
+* Native Web & Device APIs:
+  - MediaDevices API (navigator.mediaDevices.getUserMedia & enumerateDevices):
+    - Front / Back camera detection and switching.
+    - Camera resolution selection (1080p 60fps, 720p 60fps, 480p 30fps, Auto).
+    - Hardware camera constraints (applyConstraints for optical/digital zoom & torch).
+  - Multi-touch Touch Events API:
+    - Native two-finger Pinch-to-Zoom gesture recognition.
+  - Fullscreen API:
+    - Fullscreen projector display mode with one click.
+  - QR Code Generation:
+    - Instant pairing via smartphone QR scanner without manual IP typing.
+
+
+4. BACKEND ARCHITECTURE
+--------------------------------------------------------------------------------
+* Runtime:
+  - Node.js (v18+)
+
+* Web Server & REST API:
+  - Express.js (TypeScript)
+  - REST endpoints for session creation, validation, and token authentication.
+
+* WebSocket Server:
+  - Socket.io Server (integrated with Node HTTP/Express server)
+  - Manages session rooms, broadcaster/viewer role mapping, and signaling relays.
+
+* Security & Networking:
+  - CORS (Cross-Origin Resource Sharing) configuration for local network origins.
+  - Express Rate Limiting (preventing abuse and brute-force pairing).
+  - IPv4 Local Network binding (0.0.0.0 and 127.0.0.1) for Windows/LAN compatibility.
+
+
+5. KEY ARCHITECTURAL ADVANTAGES
+--------------------------------------------------------------------------------
+1. Zero App Installation: Runs entirely in modern web browsers (Chrome, Safari, Edge).
+2. Ultra-Low Latency: Direct WebRTC peer-to-peer streaming with near-zero lag.
+3. Local Network Privacy: Video frames remain strictly inside the local Wi-Fi.
+4. Cross-Platform: Works seamlessly across Android, iPhone, Windows, Mac, Linux, 
+   and Smart Projector browsers.
+================================================================================

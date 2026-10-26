@@ -14,6 +14,7 @@ const io = new Server(server, {
   },
 });
 
+app.set('io', io);
 registerSignalingSocket(io);
 
 // Listen on 0.0.0.0 so phone and devices on LAN can connect

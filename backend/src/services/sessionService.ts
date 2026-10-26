@@ -38,7 +38,9 @@ class SessionService {
     const session = this.sessions.get(code);
     if (!session || session.status === 'ended') return null;
 
-    session.phoneToken = generateToken();
+    if (!session.phoneToken) {
+      session.phoneToken = generateToken();
+    }
     session.status = 'connected';
     return session;
   }
