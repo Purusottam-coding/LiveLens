@@ -14,10 +14,10 @@ export function isBackDevice(device: MediaDeviceInfo): boolean {
 }
 
 const QUALITY_CONSTRAINTS: Record<Quality, { width: number; height: number; frameRate: number }> = {
-  auto: { width: 1920, height: 1080, frameRate: 60 },
+  auto: { width: 1280, height: 720, frameRate: 30 },
   '480p': { width: 854, height: 480, frameRate: 30 },
-  '720p': { width: 1280, height: 720, frameRate: 60 },
-  '1080p': { width: 1920, height: 1080, frameRate: 60 },
+  '720p': { width: 1280, height: 720, frameRate: 30 },
+  '1080p': { width: 1920, height: 1080, frameRate: 30 },
 };
 
 interface UseCameraOptions {

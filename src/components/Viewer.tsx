@@ -13,14 +13,7 @@ import {
 import { QRCodeSVG } from 'qrcode.react';
 import { useSignaling, SignalingMessage } from '../hooks/useSignaling';
 import type { VideoTransform } from '../types';
-
-const ICE_SERVERS: RTCConfiguration = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:global.stun.twilio.com:3478' },
-  ],
-};
+import { ICE_SERVERS } from '../config/webrtc';
 
 const STORAGE_KEY = 'livelens_viewer_room_code';
 
@@ -68,7 +61,10 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
   const [isPhonePaired, setIsPhonePaired] = useState(false);
   const [copied, setCopied] = useState(false);
   const [hasVideoTrack, setHasVideoTrack] = useState(false);
+  const [isVideoPlaying, setIsVideoPlaying] = useState(false);
   const [needsUserInteraction, setNeedsUserInteraction] = useState(false);
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+
   const [videoTransform, setVideoTransform] = useState<VideoTransform>({
     rotation: 0,
     mirrorX: false,
@@ -90,6 +86,7 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
     setIsPhonePaired(false);
     setStatus('waiting');
     setHasVideoTrack(false);
+    setIsVideoPlaying(false);
     setNeedsUserInteraction(false);
     cleanupPeerConnection();
   };
@@ -100,10 +97,13 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
       pcRef.current = null;
     }
     iceCandidateQueue.current = [];
+    setRemoteStream(null);
+    setIsVideoPlaying(false);
+    setHasVideoTrack(false);
+    setNeedsUserInteraction(false);
     if (remoteVideoRef.current) {
       remoteVideoRef.current.srcObject = null;
     }
-    setHasVideoTrack(false);
   }, []);
 
   const flushIceCandidates = useCallback(async () => {
@@ -125,7 +125,7 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
       pcRef.current.close();
     }
 
-    console.log('[Viewer] Setting up new RTCPeerConnection');
+    console.log('[Viewer] Setting up new RTCPeerConnection with STUN & TURN');
     const pc = new RTCPeerConnection(ICE_SERVERS);
     pcRef.current = pc;
 
@@ -141,39 +141,24 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
     };
 
     pc.ontrack = (event) => {
-      console.log('[Viewer] Remote track received:', event);
-      // Support both event.streams[0] and direct MediaStream([event.track])
+      console.log('[Viewer] Remote track received:', event.track.kind);
       const stream = (event.streams && event.streams[0])
         ? event.streams[0]
         : new MediaStream([event.track]);
 
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = stream;
-        remoteVideoRef.current.muted = true;
-        remoteVideoRef.current.defaultMuted = true;
-        remoteVideoRef.current
-          .play()
-          .then(() => {
-            setNeedsUserInteraction(false);
-          })
-          .catch((err) => {
-            console.warn('[Viewer] Autoplay blocked, needs click:', err);
-            setNeedsUserInteraction(true);
-          });
-      }
-
+      setRemoteStream(stream);
       setHasVideoTrack(true);
       setStatus('connected');
       setIsPhonePaired(true);
 
-      // Listen for un-mute when the first camera frames arrive
+      // Listen for un-mute when camera frames start arriving
       event.track.onunmute = () => {
-        console.log('[Viewer] Track unmuted (frames flowing)');
-        if (remoteVideoRef.current) {
-          remoteVideoRef.current.play().catch(console.warn);
-        }
+        console.log('[Viewer] Remote track unmuted, frames arriving');
         setHasVideoTrack(true);
         setStatus('connected');
+        if (remoteVideoRef.current) {
+          remoteVideoRef.current.play().catch(() => setNeedsUserInteraction(true));
+        }
       };
     };
 
@@ -186,6 +171,7 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
         setStatus('waiting');
         setIsPhonePaired(false);
         setHasVideoTrack(false);
+        setIsVideoPlaying(false);
         if (remoteVideoRef.current) {
           remoteVideoRef.current.srcObject = null;
         }
@@ -197,11 +183,48 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
       if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
         setStatus('connected');
         setIsPhonePaired(true);
+        if (remoteVideoRef.current) {
+          remoteVideoRef.current.play().catch(() => setNeedsUserInteraction(true));
+        }
+      } else if (pc.iceConnectionState === 'failed') {
+        console.warn('[Viewer] ICE connection failed. Requesting restart from phone camera...');
+        sendRef.current('peer-joined', { role: 'viewer', restart: true });
       }
     };
 
     return pc;
   }, []);
+
+  // Bind remote stream to HTML5 video element with mobile-friendly attributes
+  useEffect(() => {
+    const video = remoteVideoRef.current;
+    if (!video) return;
+
+    if (remoteStream) {
+      if (video.srcObject !== remoteStream) {
+        video.srcObject = remoteStream;
+      }
+      video.muted = true;
+      video.defaultMuted = true;
+      video.volume = 0;
+      video.playsInline = true;
+      video.setAttribute('playsinline', 'true');
+      video.setAttribute('webkit-playsinline', 'true');
+      video.setAttribute('x5-playsinline', 'true');
+      video.setAttribute('x5-video-player-type', 'h5');
+
+      video.play().then(() => {
+        setIsVideoPlaying(true);
+        setNeedsUserInteraction(false);
+      }).catch((err) => {
+        console.warn('[Viewer] Autoplay blocked, click required:', err);
+        setNeedsUserInteraction(true);
+      });
+    } else {
+      video.srcObject = null;
+      setIsVideoPlaying(false);
+    }
+  }, [remoteStream]);
 
   // Message handler
   const handleSignalingMessage = useCallback(
@@ -284,7 +307,7 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
   const copyCode = useCallback(() => {
     const handleSuccess = () => {
       setCopied(true);
-      setTimeout(() => setCopied(false), 2500);
+      setTimeout(() => setCopied(false), 2000);
     };
 
     if (navigator.clipboard && window.isSecureContext) {
@@ -304,45 +327,81 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
     }
   }, []);
 
-  const handleManualPlay = () => {
-    if (remoteVideoRef.current) {
-      remoteVideoRef.current.muted = true;
-      remoteVideoRef.current.play().then(() => {
+  const handleManualPlay = useCallback(() => {
+    const video = remoteVideoRef.current;
+    if (video) {
+      video.muted = true;
+      video.defaultMuted = true;
+      video.play().then(() => {
+        setIsVideoPlaying(true);
         setNeedsUserInteraction(false);
-      }).catch(console.warn);
+      }).catch((err) => {
+        console.warn('[Viewer] Manual play error:', err);
+      });
     }
-  };
+  }, []);
 
   const cameraUrl = `${window.location.origin}/camera?code=${roomCode}`;
   const isVideoLive = status === 'connected' || hasVideoTrack;
 
   return (
     <div ref={containerRef} className="min-h-screen bg-[#080c14] flex flex-col relative select-none">
-      {/* ── Remote Fullscreen Video ── */}
+      {/* ── Remote Fullscreen Video (Universal Mobile & Desktop Support) ── */}
       <video
         ref={remoteVideoRef}
         autoPlay
         playsInline
         muted
+        onLoadedMetadata={(e) => {
+          e.currentTarget.play().catch(() => setNeedsUserInteraction(true));
+        }}
+        onCanPlay={(e) => {
+          e.currentTarget.play().catch(() => setNeedsUserInteraction(true));
+        }}
+        onPlaying={() => {
+          setIsVideoPlaying(true);
+          setNeedsUserInteraction(false);
+        }}
+        onPause={() => {
+          if (isVideoLive) {
+            setIsVideoPlaying(false);
+          }
+        }}
         style={{
           transform: `rotate(${videoTransform.rotation}deg) scaleX(${videoTransform.mirrorX ? -1 : 1}) scaleY(${videoTransform.mirrorY ? -1 : 1}) scale(${videoTransform.zoom || 1})`,
           transition: 'transform 0.2s ease-out',
         }}
-        className={`fixed inset-0 w-full h-full object-contain bg-black transition-opacity duration-500 ${
+        className={`fixed inset-0 w-full h-full object-contain bg-black transition-opacity duration-300 ${
           isVideoLive ? 'opacity-100 z-10' : 'opacity-0 pointer-events-none'
         }`}
       />
 
-      {/* Manual play overlay if browser blocked autoplay */}
-      {isVideoLive && needsUserInteraction && (
+      {/* ── Video Loading / Autoplay Interaction Overlay ── */}
+      {isVideoLive && (!isVideoPlaying || needsUserInteraction) && (
         <div
           onClick={handleManualPlay}
-          className="fixed inset-0 z-30 flex items-center justify-center bg-black/60 backdrop-blur-sm cursor-pointer"
+          className="fixed inset-0 z-30 flex flex-col items-center justify-center bg-black/85 backdrop-blur-md p-6 text-center cursor-pointer select-none transition-all"
         >
-          <div className="flex items-center gap-3 px-6 py-4 rounded-3xl bg-brand-500 text-white font-bold shadow-2xl animate-bounce">
-            <Play className="w-6 h-6 fill-current" />
-            <span>Click to Show Live Video</span>
+          <div className="w-16 h-16 rounded-3xl bg-brand-500/20 border border-brand-500/30 flex items-center justify-center mb-4">
+            <Loader2 className="w-8 h-8 text-brand-400 animate-spin" />
           </div>
+          <h3 className="text-xl font-bold text-white mb-2">
+            Connecting Video Feed…
+          </h3>
+          <p className="text-slate-400 text-sm max-w-sm mb-6 leading-relaxed">
+            Negotiating secure stream. If video doesn't play automatically, tap below.
+          </p>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleManualPlay();
+            }}
+            className="flex items-center gap-2.5 px-6 py-3.5 rounded-2xl bg-brand-500 hover:bg-brand-600 active:scale-95 text-white font-bold text-sm shadow-xl shadow-brand-500/30 transition-all"
+          >
+            <Play className="w-5 h-5 fill-current" />
+            <span>Tap to Show Live Video</span>
+          </button>
         </div>
       )}
 

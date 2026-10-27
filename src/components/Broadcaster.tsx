@@ -14,14 +14,7 @@ import { useCamera } from '../hooks/useCamera';
 import { useSignaling, SignalingMessage } from '../hooks/useSignaling';
 import Controls, { Quality, QUALITY_OPTIONS } from './Controls';
 import type { VideoTransform } from '../types';
-
-const ICE_SERVERS: RTCConfiguration = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:global.stun.twilio.com:3478' },
-  ],
-};
+import { ICE_SERVERS } from '../config/webrtc';
 
 interface BroadcasterProps {
   initialCode?: string;
@@ -35,7 +28,7 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
   const [activeRoomCode, setActiveRoomCode] = useState<string | null>(null);
   const [status, setStatus] = useState<Status>('idle');
   const [error, setError] = useState('');
-  const [quality, setQuality] = useState<Quality>('1080p');
+  const [quality, setQuality] = useState<Quality>('auto');
 
   const [videoTransform, setVideoTransform] = useState<VideoTransform>({
     rotation: 0,
@@ -105,7 +98,10 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
   const sendOffer = useCallback(async (pc: RTCPeerConnection) => {
     try {
       console.log('[Broadcaster] Creating WebRTC offer');
-      const offer = await pc.createOffer();
+      const offer = await pc.createOffer({
+        offerToReceiveAudio: false,
+        offerToReceiveVideo: false,
+      });
       await pc.setLocalDescription(offer);
       console.log('[Broadcaster] Sending offer to viewer');
       const desc = pc.localDescription?.toJSON
@@ -143,7 +139,16 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
     };
 
     // Add all tracks from the camera stream
-    currentStream.getTracks().forEach((track) => pc.addTrack(track, currentStream));
+    currentStream.getTracks().forEach((track) => {
+      const sender = pc.addTrack(track, currentStream);
+      try {
+        const params = sender.getParameters?.();
+        if (params && params.encodings && params.encodings.length > 0) {
+          params.encodings[0].maxBitrate = 2500000;
+          sender.setParameters?.(params).catch(() => {});
+        }
+      } catch (e) {}
+    });
 
     // Send initial offer
     sendOffer(pc);
@@ -162,10 +167,10 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
           console.log('[Broadcaster] Viewer is in signaling room');
           // If we are already streaming and have a stream, send offer now
           if (statusRef.current === 'streaming' && streamRef.current) {
-            if (pcRef.current && pcRef.current.signalingState !== 'closed') {
-              sendOffer(pcRef.current);
-            } else {
+            if (msg.payload?.restart || !pcRef.current || pcRef.current.signalingState === 'closed') {
               createPeerConnection(streamRef.current);
+            } else {
+              sendOffer(pcRef.current);
             }
           }
         } else if (msg.type === 'answer') {
