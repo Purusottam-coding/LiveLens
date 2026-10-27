@@ -7,28 +7,8 @@ export const ICE_SERVERS: RTCConfiguration = {
     { urls: 'stun:stun3.l.google.com:19302' },
     { urls: 'stun:stun4.l.google.com:19302' },
 
-    // Open Relay Project Public STUN & TURN (Free NAT traversal for different networks)
-    { urls: 'stun:openrelay.metered.ca:80' },
-    {
-      urls: 'turn:openrelay.metered.ca:80',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
-    {
-      urls: 'turn:openrelay.metered.ca:443',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
-    {
-      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
-    {
-      urls: 'turn:openrelay.metered.ca:80?transport=tcp',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
+    // Cloudflare Public STUN
+    { urls: 'stun:stun.cloudflare.com:3478' },
   ],
   iceCandidatePoolSize: 10,
 };

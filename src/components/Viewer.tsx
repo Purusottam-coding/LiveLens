@@ -258,10 +258,12 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
           cleanupPeerConnection();
         } else if (msg.type === 'offer') {
           console.log('[Viewer] Handling offer from broadcaster');
-          let pc = pcRef.current;
-          if (!pc || pc.signalingState === 'closed') {
-            pc = setupPeerConnection();
+          // Always create a clean peer connection for each new broadcast offer
+          if (pcRef.current) {
+            pcRef.current.close();
+            pcRef.current = null;
           }
+          const pc = setupPeerConnection();
 
           const offerDesc = new RTCSessionDescription(msg.payload);
           await pc.setRemoteDescription(offerDesc);
@@ -276,6 +278,7 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
             : { type: pc.localDescription?.type, sdp: pc.localDescription?.sdp };
           sendRef.current('answer', answerPayload);
         } else if (msg.type === 'ice-candidate') {
+          if (!msg.payload || !msg.payload.candidate) return;
           const pc = pcRef.current;
           if (pc && pc.remoteDescription && pc.remoteDescription.type) {
             try {

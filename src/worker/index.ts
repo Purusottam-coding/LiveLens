@@ -26,7 +26,14 @@ app.get('/ws/:roomCode', async (c) => {
 // Production SPA assets fallback
 app.get('*', async (c) => {
   if (c.env.ASSETS) {
-    return c.env.ASSETS.fetch(c.req.raw);
+    const res = await c.env.ASSETS.fetch(c.req.raw);
+    if (res.status === 404) {
+      // Rewrite request path to / to serve index.html for SPA client-side routes (e.g. /camera, /display)
+      const url = new URL(c.req.url);
+      url.pathname = '/';
+      return c.env.ASSETS.fetch(new Request(url.toString(), c.req.raw));
+    }
+    return res;
   }
   return c.text('Not found', 404);
 });

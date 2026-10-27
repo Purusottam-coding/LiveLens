@@ -180,6 +180,7 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
           await pc.setRemoteDescription(new RTCSessionDescription(msg.payload));
           await flushIceCandidates();
         } else if (msg.type === 'ice-candidate') {
+          if (!msg.payload || !msg.payload.candidate) return;
           const pc = pcRef.current;
           if (pc && pc.remoteDescription && pc.remoteDescription.type) {
             try {
