@@ -6,7 +6,7 @@
 --------------------------------------------------------------------------------
 LiveLens is a real-time, low-latency web application designed to turn any smartphone 
 into a wireless document camera or live video feed for projectors and external displays 
-over a local Wi-Fi network without requiring native mobile app installations.
+over Wi-Fi / Internet without requiring native mobile app installations.
 
 
 2. CORE STREAMING & REAL-TIME NETWORKING
@@ -15,74 +15,49 @@ over a local Wi-Fi network without requiring native mobile app installations.
   - Component: RTCPeerConnection, RTCSessionDescription, RTCIceCandidate
   - Purpose: Ultra-low latency, peer-to-peer (P2P) direct audio/video streaming 
     from phone camera directly to projector display.
-  - Video data travels directly device-to-device over local Wi-Fi without passing 
-    through any intermediate cloud servers.
+  - Video data travels directly device-to-device with sub-frame latency.
 
-* Socket.io (WebSocket Signaling):
-  - Purpose: Real-time bidirectional signaling channel.
+* Cloudflare Workers & Durable Objects (Native Edge WebSocket Signaling):
+  - Purpose: Real-time edge bidirectional signaling channel (/ws/:roomCode).
+  - Built with Hono and Cloudflare Durable Objects (SignalingRoom).
   - Exchanging WebRTC session descriptions (SDP Offer / Answer) and ICE candidates.
-  - Room management based on 6-digit session codes.
-  - Instant synchronization of camera commands (Zoom, Rotation, Mirroring, Flash).
+  - Room management based on 6-digit session pairing codes.
+  - Instant edge synchronization of camera commands (Zoom, Rotation, Mirroring, Torch).
 
 * STUN Servers:
   - Google STUN (stun:stun.l.google.com:19302, stun:stun1.l.google.com:19302)
   - Twilio STUN (stun:global.stun.twilio.com:3478)
-  - Purpose: NAT traversal and discovering public/local candidate IPs for direct P2P link.
+  - Purpose: NAT traversal and discovering candidates for direct P2P link.
 
 
-3. FRONTEND ARCHITECTURE
+3. SINGLE UNIFIED ROOT ARCHITECTURE (CLOUDFLARE WORKERS)
 --------------------------------------------------------------------------------
-* Framework & Language:
-  - React 18 / 19
-  - TypeScript (strict type checking)
+* Root Configuration:
+  - package.json: Single root package with zero split backend/frontend overhead.
+  - wrangler.jsonc: Cloudflare Worker, Durable Object bindings, and static assets.
+  - vite.config.ts: Vite 6 + @cloudflare/vite-plugin + @vitejs/plugin-react.
 
-* Build Tool & Dev Server:
-  - Vite 5 (high-performance ES modules build system)
-  - @vitejs/plugin-basic-ssl: Automatic SSL certificate generation for local HTTPS 
-    (mandatory for mobile browsers like Android Chrome and iOS Safari to grant 
-    camera access via getUserMedia over LAN IP).
+* Edge Backend:
+  - Cloudflare Workers runtime
+  - Hono v4: Lightweight edge routing
+  - Durable Objects: Distributed stateful WebSocket signaling room
 
-* Styling & UI:
-  - Tailwind CSS v4 (responsive utility-first styling, dark mode theme)
-  - Lucide React (modern, clean SVG icons for camera, zoom, flip, settings)
+* Frontend UI & Components:
+  - React 19 + TypeScript
+  - Tailwind CSS + PostCSS + Autoprefixer
+  - Lucide React (camera icons, HUD controls)
+  - qrcode.react: On-screen pairing QR code generation
+  - Components:
+    * Broadcaster: Phone camera capture, controls, and WebRTC streaming
+    * Viewer: Projector display, QR pairing screen, fullscreen video presentation
+    * Controls: Modern mobile thumb deck, zoom dial, rotation, mirror, torch
 
-* Native Web & Device APIs:
-  - MediaDevices API (navigator.mediaDevices.getUserMedia & enumerateDevices):
-    - Front / Back camera detection and switching.
-    - Camera resolution selection (1080p 60fps, 720p 60fps, 480p 30fps, Auto).
-    - Hardware camera constraints (applyConstraints for optical/digital zoom & torch).
-  - Multi-touch Touch Events API:
-    - Native two-finger Pinch-to-Zoom gesture recognition.
-  - Fullscreen API:
-    - Fullscreen projector display mode with one click.
-  - QR Code Generation:
-    - Instant pairing via smartphone QR scanner without manual IP typing.
-
-
-4. BACKEND ARCHITECTURE
+4. DEPLOYMENT & COMMANDS
 --------------------------------------------------------------------------------
-* Runtime:
-  - Node.js (v18+)
-
-* Web Server & REST API:
-  - Express.js (TypeScript)
-  - REST endpoints for session creation, validation, and token authentication.
-
-* WebSocket Server:
-  - Socket.io Server (integrated with Node HTTP/Express server)
-  - Manages session rooms, broadcaster/viewer role mapping, and signaling relays.
-
-* Security & Networking:
-  - CORS (Cross-Origin Resource Sharing) configuration for local network origins.
-  - Express Rate Limiting (preventing abuse and brute-force pairing).
-  - IPv4 Local Network binding (0.0.0.0 and 127.0.0.1) for Windows/LAN compatibility.
-
-
-5. KEY ARCHITECTURAL ADVANTAGES
---------------------------------------------------------------------------------
-1. Zero App Installation: Runs entirely in modern web browsers (Chrome, Safari, Edge).
-2. Ultra-Low Latency: Direct WebRTC peer-to-peer streaming with near-zero lag.
-3. Local Network Privacy: Video frames remain strictly inside the local Wi-Fi.
-4. Cross-Platform: Works seamlessly across Android, iPhone, Windows, Mac, Linux, 
-   and Smart Projector browsers.
+* Development:
+  - npm run dev: Starts unified Vite + Cloudflare local dev environment.
+* Production Build:
+  - npm run build: Bundles React SPA client and Worker SSR edge bundle.
+* Edge Deployment:
+  - npm run deploy: Builds and deploys directly to Cloudflare global network via Wrangler.
 ================================================================================
