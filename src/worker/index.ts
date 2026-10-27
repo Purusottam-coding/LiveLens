@@ -3,6 +3,7 @@ import { DurableObject } from 'cloudflare:workers';
 
 type Bindings = {
   SIGNALING_ROOM: DurableObjectNamespace<SignalingRoom>;
+  ASSETS?: Fetcher;
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -20,6 +21,14 @@ app.get('/ws/:roomCode', async (c) => {
   const id = c.env.SIGNALING_ROOM.idFromName(roomCode);
   const roomStub = c.env.SIGNALING_ROOM.get(id);
   return roomStub.fetch(c.req.raw);
+});
+
+// Production SPA assets fallback
+app.get('*', async (c) => {
+  if (c.env.ASSETS) {
+    return c.env.ASSETS.fetch(c.req.raw);
+  }
+  return c.text('Not found', 404);
 });
 
 export class SignalingRoom extends DurableObject {

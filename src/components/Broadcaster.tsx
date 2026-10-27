@@ -8,6 +8,7 @@ import {
   ShieldCheck,
   Play,
   User,
+  ArrowLeft,
 } from 'lucide-react';
 import { useCamera } from '../hooks/useCamera';
 import { useSignaling, SignalingMessage } from '../hooks/useSignaling';
@@ -46,7 +47,10 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const iceCandidateQueue = useRef<RTCIceCandidateInit[]>([]);
-  const isBroadcastingRef = useRef(false);
+  const sendRef = useRef<(type: string, payload?: any) => void>(() => {});
+  const statusRef = useRef<Status>(status);
+  statusRef.current = status;
+  const pairingTimeoutRef = useRef<number | null>(null);
 
   // Camera only enabled during 'streaming'
   const isCameraEnabled = status === 'streaming';
@@ -64,6 +68,9 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
     currentResolution,
   } = useCamera({ enabled: isCameraEnabled, quality });
 
+  const streamRef = useRef<MediaStream | null>(null);
+  streamRef.current = stream;
+
   // Attach stream to local preview
   useEffect(() => {
     if (localVideoRef.current && stream) {
@@ -78,41 +85,103 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
       pcRef.current = null;
     }
     iceCandidateQueue.current = [];
-    isBroadcastingRef.current = false;
   }, []);
 
   // Flush queued candidates
   const flushIceCandidates = useCallback(async () => {
     while (iceCandidateQueue.current.length > 0) {
       const cand = iceCandidateQueue.current.shift();
-      if (cand && pcRef.current) {
-        await pcRef.current.addIceCandidate(new RTCIceCandidate(cand)).catch(console.warn);
+      if (cand && pcRef.current && pcRef.current.remoteDescription) {
+        try {
+          await pcRef.current.addIceCandidate(new RTCIceCandidate(cand));
+        } catch (err) {
+          console.warn('[Broadcaster] Could not add queued ICE candidate:', err);
+        }
       }
     }
   }, []);
+
+  // Send WebRTC offer helper
+  const sendOffer = useCallback(async (pc: RTCPeerConnection) => {
+    try {
+      console.log('[Broadcaster] Creating WebRTC offer');
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      console.log('[Broadcaster] Sending offer to viewer');
+      const desc = pc.localDescription?.toJSON
+        ? pc.localDescription.toJSON()
+        : { type: pc.localDescription?.type, sdp: pc.localDescription?.sdp };
+      sendRef.current('offer', desc);
+    } catch (err) {
+      console.error('[Broadcaster] Error sending offer:', err);
+    }
+  }, []);
+
+  // Create or refresh RTCPeerConnection
+  const createPeerConnection = useCallback((currentStream: MediaStream) => {
+    if (pcRef.current) {
+      pcRef.current.close();
+    }
+
+    console.log('[Broadcaster] Creating new RTCPeerConnection');
+    const pc = new RTCPeerConnection(ICE_SERVERS);
+    pcRef.current = pc;
+
+    pc.onicecandidate = ({ candidate }) => {
+      if (candidate) {
+        const cand = candidate.toJSON ? candidate.toJSON() : {
+          candidate: candidate.candidate,
+          sdpMid: candidate.sdpMid,
+          sdpMLineIndex: candidate.sdpMLineIndex,
+        };
+        sendRef.current('ice-candidate', cand);
+      }
+    };
+
+    pc.onconnectionstatechange = () => {
+      console.log('[Broadcaster] WebRTC connectionState:', pc.connectionState);
+    };
+
+    // Add all tracks from the camera stream
+    currentStream.getTracks().forEach((track) => pc.addTrack(track, currentStream));
+
+    // Send initial offer
+    sendOffer(pc);
+    sendRef.current('video-transform', videoTransform);
+
+    return pc;
+  }, [sendOffer, videoTransform]);
 
   // Signaling message handler
   const handleSignalingMessage = useCallback(
     async (msg: SignalingMessage) => {
       console.log('[Broadcaster] Received signal:', msg.type);
-      const pc = pcRef.current;
 
       try {
         if (msg.type === 'peer-joined') {
-          console.log('[Broadcaster] Viewer joined signaling room');
-          // If we are currently streaming and have a stream ready, send offer
-          if (status === 'streaming' && stream && pc) {
-            sendOffer(pc);
+          console.log('[Broadcaster] Viewer is in signaling room');
+          // If we are already streaming and have a stream, send offer now
+          if (statusRef.current === 'streaming' && streamRef.current) {
+            if (pcRef.current && pcRef.current.signalingState !== 'closed') {
+              sendOffer(pcRef.current);
+            } else {
+              createPeerConnection(streamRef.current);
+            }
           }
         } else if (msg.type === 'answer') {
+          const pc = pcRef.current;
           if (!pc) return;
           console.log('[Broadcaster] Received answer from Viewer');
           await pc.setRemoteDescription(new RTCSessionDescription(msg.payload));
           await flushIceCandidates();
         } else if (msg.type === 'ice-candidate') {
-          if (!pc) return;
-          if (pc.remoteDescription?.type) {
-            await pc.addIceCandidate(new RTCIceCandidate(msg.payload)).catch(console.warn);
+          const pc = pcRef.current;
+          if (pc && pc.remoteDescription && pc.remoteDescription.type) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(msg.payload));
+            } catch (err) {
+              console.warn('[Broadcaster] addIceCandidate error:', err);
+            }
           } else {
             iceCandidateQueue.current.push(msg.payload);
           }
@@ -123,25 +192,11 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
         console.warn('[Broadcaster] Error handling signal message:', err);
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [status, stream]
+    [sendOffer, createPeerConnection, flushIceCandidates]
   );
 
   const { isConnected, send } = useSignaling(activeRoomCode, handleSignalingMessage);
-
-  // Send WebRTC offer helper
-  const sendOffer = useCallback(
-    (pc: RTCPeerConnection) => {
-      pc.createOffer({ offerToReceiveVideo: false, offerToReceiveAudio: false })
-        .then((offer) => pc.setLocalDescription(offer))
-        .then(() => {
-          console.log('[Broadcaster] Sending offer to viewer');
-          send('offer', pc.localDescription);
-        })
-        .catch(console.error);
-    },
-    [send]
-  );
+  sendRef.current = send;
 
   // Handle pairing action
   const handlePair = () => {
@@ -154,11 +209,20 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
     setError('');
     setStatus('pairing');
     setActiveRoomCode(cleanCode);
+
+    if (pairingTimeoutRef.current) clearTimeout(pairingTimeoutRef.current);
+    pairingTimeoutRef.current = window.setTimeout(() => {
+      if (statusRef.current === 'pairing') {
+        setStatus('error');
+        setError('Connection timed out. Check that the projector screen is open with code ' + cleanCode);
+      }
+    }, 8000);
   };
 
   // When WebSocket connects to room, mark as paired
   useEffect(() => {
     if (isConnected && activeRoomCode && status === 'pairing') {
+      if (pairingTimeoutRef.current) clearTimeout(pairingTimeoutRef.current);
       setStatus('paired');
       send('phone-paired', {});
       send('peer-joined', { role: 'broadcaster' });
@@ -168,37 +232,19 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
   // Start broadcast: transition to 'streaming'
   const handleStartBroadcast = () => {
     setStatus('streaming');
+    statusRef.current = 'streaming';
     send('phone-paired', {});
+    send('peer-joined', { role: 'broadcaster' });
   };
 
-  // Setup PeerConnection when stream is available during streaming
+  // Setup PeerConnection when stream becomes available during streaming
   useEffect(() => {
     if (status !== 'streaming' || !stream || stream.getVideoTracks().length === 0) return;
 
-    if (!pcRef.current) {
-      console.log('[Broadcaster] Creating RTCPeerConnection');
-      const pc = new RTCPeerConnection(ICE_SERVERS);
-      pcRef.current = pc;
-
-      pc.onicecandidate = ({ candidate }) => {
-        if (candidate) {
-          send('ice-candidate', candidate);
-        }
-      };
-
-      pc.onconnectionstatechange = () => {
-        console.log('[Broadcaster] WebRTC connectionState:', pc.connectionState);
-      };
-
-      // Add local tracks
-      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
-
-      // Send initial offer
-      sendOffer(pc);
-      // Send current video transforms
-      send('video-transform', videoTransform);
+    if (!pcRef.current || pcRef.current.signalingState === 'closed') {
+      createPeerConnection(stream);
     } else {
-      // Stream changed (e.g. camera switch) -> replace track
+      // Stream changed (e.g. camera switch front/back) -> replace track
       const newVideoTrack = stream.getVideoTracks()[0];
       const senders = pcRef.current.getSenders();
       const videoSender = senders.find((s) => s.track?.kind === 'video');
@@ -207,7 +253,7 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
         videoSender.replaceTrack(newVideoTrack).catch(console.warn);
       }
     }
-  }, [status, stream, send, sendOffer, videoTransform]);
+  }, [status, stream, createPeerConnection]);
 
   // Transform update handler
   const handleTransformChange = (newTransform: VideoTransform) => {
@@ -218,11 +264,12 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
     send('video-transform', newTransform);
   };
 
-  // Stop broadcast
+  // Stop broadcast - takes phone back to code entry screen directly
   const handleStopBroadcast = () => {
     send('stop-broadcast', {});
     cleanupPeerConnection();
-    setStatus('paired');
+    setActiveRoomCode(null);
+    setStatus('idle');
   };
 
   // Pinch-to-zoom support
@@ -280,44 +327,52 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
         }`}
       />
 
-      {/* Live scrim */}
-      {isLive && (
-        <div className="fixed inset-0 bg-gradient-to-b from-black/60 via-transparent to-black/70 pointer-events-none" />
-      )}
-
       {/* ── Top Bar HUD ── */}
       <header className="relative z-10 flex items-center justify-between px-3 sm:px-6 py-3 sm:py-4 gap-2 select-none">
-        <div
-          className={`flex items-center gap-2 px-3.5 sm:px-4 py-1.5 sm:py-2 rounded-full backdrop-blur-xl border font-bold text-xs sm:text-sm transition-all shadow-lg shrink-0 ${
-            isLive
-              ? 'bg-red-500/20 border-red-500/40 text-red-300 shadow-red-500/10'
-              : status === 'paired'
-              ? 'bg-green-500/25 border-green-400/50 text-green-300 shadow-green-500/10'
-              : 'bg-white/10 border-white/15 text-white/70'
-          }`}
-        >
-          {isLive ? (
-            <>
-              <span className="w-2.5 h-2.5 rounded-full bg-red-400 animate-pulse shadow-[0_0_8px_#f87171]" />
-              <span>LIVE</span>
-              {code && (
-                <>
-                  <span className="text-white/30">•</span>
-                  <span className="font-mono text-white/90">#{code}</span>
-                </>
-              )}
-            </>
-          ) : status === 'paired' ? (
-            <>
-              <ShieldCheck className="w-4 h-4 text-green-400" />
-              <span>Paired</span>
-            </>
-          ) : (
-            <>
-              <Wifi className="w-4 h-4 text-white/60" />
-              <span>Not Paired</span>
-            </>
+        <div className="flex items-center gap-2">
+          {!isLive && onExit && (
+            <button
+              onClick={onExit}
+              title="Return to mode selection"
+              className="flex items-center gap-1.5 px-3 py-1.5 sm:py-2 rounded-full bg-white/10 hover:bg-white/20 active:scale-95 backdrop-blur-xl border border-white/15 text-white/80 hover:text-white text-xs sm:text-sm font-semibold transition shadow-lg shrink-0"
+            >
+              <ArrowLeft className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              <span>Modes</span>
+            </button>
           )}
+
+          <div
+            className={`flex items-center gap-2 px-3.5 sm:px-4 py-1.5 sm:py-2 rounded-full backdrop-blur-xl border font-bold text-xs sm:text-sm transition-all shadow-lg shrink-0 ${
+              isLive
+                ? 'bg-red-500/20 border-red-500/40 text-red-300 shadow-red-500/10'
+                : status === 'paired'
+                ? 'bg-green-500/25 border-green-400/50 text-green-300 shadow-green-500/10'
+                : 'bg-white/10 border-white/15 text-white/70'
+            }`}
+          >
+            {isLive ? (
+              <>
+                <span className="w-2.5 h-2.5 rounded-full bg-red-400 animate-pulse shadow-[0_0_8px_#f87171]" />
+                <span>LIVE</span>
+                {code && (
+                  <>
+                    <span className="text-white/30">•</span>
+                    <span className="font-mono text-white/90">#{code}</span>
+                  </>
+                )}
+              </>
+            ) : status === 'paired' ? (
+              <>
+                <ShieldCheck className="w-4 h-4 text-green-400" />
+                <span>Paired</span>
+              </>
+            ) : (
+              <>
+                <Wifi className="w-4 h-4 text-white/60" />
+                <span>Not Paired</span>
+              </>
+            )}
+          </div>
         </div>
 
         {/* Live Controls on Top Bar */}
@@ -458,13 +513,23 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
               </button>
             </div>
 
-            <button
-              onClick={handleStartBroadcast}
-              className="inline-flex items-center justify-center gap-2.5 px-7 py-3.5 rounded-full bg-green-500 hover:bg-green-600 active:scale-95 text-white font-bold text-base transition-all duration-200 shadow-xl shadow-green-500/25"
-            >
-              <Play className="w-5 h-5 fill-current" />
-              <span>Enable Camera & Start Live</span>
-            </button>
+            <div className="flex flex-col gap-2.5 w-full">
+              <button
+                onClick={handleStartBroadcast}
+                className="w-full inline-flex items-center justify-center gap-2.5 px-7 py-3.5 rounded-full bg-green-500 hover:bg-green-600 active:scale-95 text-white font-bold text-base transition-all duration-200 shadow-xl shadow-green-500/25"
+              >
+                <Play className="w-5 h-5 fill-current" />
+                <span>Enable Camera & Start Live</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleStopBroadcast}
+                className="w-full py-2 text-xs text-slate-400 hover:text-white transition font-medium"
+              >
+                Disconnect & Enter Different Code
+              </button>
+            </div>
           </div>
         </div>
       )}

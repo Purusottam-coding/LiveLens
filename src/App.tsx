@@ -12,12 +12,15 @@ export default function App() {
     const code = params.get('code');
     const role = params.get('role');
 
+    // If explicit camera path or code is provided -> Broadcaster
     if (path.includes('/camera') || role === 'broadcaster' || role === 'camera' || (code && code.length === 6)) {
       return 'broadcaster';
     }
+    // If explicit display path or role is provided -> Viewer
     if (path.includes('/display') || role === 'viewer' || role === 'display') {
       return 'viewer';
     }
+    // Default to mode selection home screen
     return 'home';
   });
 
@@ -54,75 +57,101 @@ export default function App() {
   };
 
   if (viewMode === 'broadcaster') {
-    return <Broadcaster initialCode={initialCode} onExit={() => navigateTo('home', '/')} />;
+    return (
+      <Broadcaster
+        initialCode={initialCode}
+        onExit={() => navigateTo('home', '/')}
+      />
+    );
   }
 
   if (viewMode === 'viewer') {
-    return <Viewer />;
+    return (
+      <Viewer
+        onExit={() => navigateTo('home', '/')}
+      />
+    );
   }
 
-  // Home Selection Landing
+  // ── Mode Selection Screen (Choose between Projector and Phone Camera) ──
   return (
-    <div className="min-h-screen bg-[#080c14] flex flex-col justify-center items-center p-6 text-white select-none">
-      <div className="w-full max-w-md flex flex-col items-center gap-8">
-        {/* App Title */}
+    <div className="min-h-screen bg-[#080c14] flex flex-col justify-center items-center p-4 sm:p-6 text-white select-none">
+      <div className="w-full max-w-lg flex flex-col items-center gap-8">
+        {/* App Title & Header */}
         <div className="flex flex-col items-center gap-3 text-center">
-          <div className="w-16 h-16 rounded-3xl bg-brand-500/20 border border-brand-500/30 flex items-center justify-center shadow-2xl shadow-brand-500/10">
+          <div className="w-16 h-16 rounded-3xl bg-surface-800 border border-surface-700 flex items-center justify-center shadow-lg">
             <Video className="w-8 h-8 text-brand-400" />
           </div>
           <div>
             <h1 className="text-3xl sm:text-4xl font-black tracking-tight text-white">
               LiveLens
             </h1>
-            <p className="text-slate-400 text-sm sm:text-base mt-1">
-              Zero-latency wireless camera to projector streaming
+            <p className="text-slate-400 text-sm sm:text-base mt-1.5 max-w-sm">
+              Choose your device mode to start streaming
             </p>
           </div>
         </div>
 
         {/* Mode Selector Cards */}
         <div className="flex flex-col gap-4 w-full">
-          {/* Projector Viewer Mode */}
+          {/* Card 1: Projector / Display Screen Mode */}
           <button
             type="button"
             onClick={() => navigateTo('viewer', '/display')}
-            className="group flex items-center justify-between p-5 rounded-3xl bg-surface-800/90 hover:bg-surface-700/80 active:scale-[0.98] border border-surface-700 transition-all shadow-xl text-left"
+            className="group relative flex items-center justify-between p-6 rounded-3xl bg-surface-800 hover:bg-surface-700/80 active:scale-[0.98] border border-surface-700 hover:border-slate-500 transition-all duration-200 shadow-xl text-left"
           >
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-2xl bg-brand-500/20 group-hover:bg-brand-500/30 flex items-center justify-center shrink-0 transition">
-                <Monitor className="w-6 h-6 text-brand-400" />
+            <div className="flex items-center gap-4 sm:gap-5">
+              <div className="w-14 h-14 rounded-2xl bg-surface-700/80 border border-surface-600 flex items-center justify-center shrink-0 transition">
+                <Monitor className="w-7 h-7 text-brand-400" />
               </div>
               <div>
-                <h2 className="font-bold text-lg text-white">Projector / Screen</h2>
-                <p className="text-xs text-slate-400">Display QR code & receive live video feed</p>
+                <div className="flex items-center gap-2">
+                  <h2 className="font-bold text-lg sm:text-xl text-white">
+                    Projector / Screen
+                  </h2>
+                  <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-white/10 border border-white/15 text-slate-300">
+                    Display
+                  </span>
+                </div>
+                <p className="text-xs sm:text-sm text-slate-400 mt-1 leading-relaxed">
+                  Display pairing code & stream live video on projector
+                </p>
               </div>
             </div>
-            <ArrowRight className="w-5 h-5 text-slate-500 group-hover:text-brand-400 group-hover:translate-x-1 transition-all" />
+            <div className="w-10 h-10 rounded-full bg-surface-700 group-hover:bg-brand-500 flex items-center justify-center shrink-0 transition-all ml-2">
+              <ArrowRight className="w-5 h-5 text-slate-300 group-hover:text-white group-hover:translate-x-0.5 transition-all" />
+            </div>
           </button>
 
-          {/* Phone Camera Broadcaster Mode */}
+          {/* Card 2: Phone Camera Broadcaster Mode */}
           <button
             type="button"
             onClick={() => navigateTo('broadcaster', '/camera')}
-            className="group flex items-center justify-between p-5 rounded-3xl bg-surface-800/90 hover:bg-surface-700/80 active:scale-[0.98] border border-surface-700 transition-all shadow-xl text-left"
+            className="group relative flex items-center justify-between p-6 rounded-3xl bg-surface-800 hover:bg-surface-700/80 active:scale-[0.98] border border-surface-700 hover:border-slate-500 transition-all duration-200 shadow-xl text-left"
           >
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-2xl bg-green-500/20 group-hover:bg-green-500/30 flex items-center justify-center shrink-0 transition">
-                <Camera className="w-6 h-6 text-green-400" />
+            <div className="flex items-center gap-4 sm:gap-5">
+              <div className="w-14 h-14 rounded-2xl bg-surface-700/80 border border-surface-600 flex items-center justify-center shrink-0 transition">
+                <Camera className="w-7 h-7 text-green-400" />
               </div>
               <div>
-                <h2 className="font-bold text-lg text-white">Phone Camera</h2>
-                <p className="text-xs text-slate-400">Pair via code & broadcast live camera feed</p>
+                <div className="flex items-center gap-2">
+                  <h2 className="font-bold text-lg sm:text-xl text-white">
+                    Phone Camera
+                  </h2>
+                  <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-white/10 border border-white/15 text-slate-300">
+                    Camera
+                  </span>
+                </div>
+                <p className="text-xs sm:text-sm text-slate-400 mt-1 leading-relaxed">
+                  Pair with 6-digit code & broadcast live camera feed
+                </p>
               </div>
             </div>
-            <ArrowRight className="w-5 h-5 text-slate-500 group-hover:text-green-400 group-hover:translate-x-1 transition-all" />
+            <div className="w-10 h-10 rounded-full bg-surface-700 group-hover:bg-green-500 flex items-center justify-center shrink-0 transition-all ml-2">
+              <ArrowRight className="w-5 h-5 text-slate-300 group-hover:text-white group-hover:translate-x-0.5 transition-all" />
+            </div>
           </button>
         </div>
-
-        {/* Footer */}
-        <p className="text-slate-500 text-xs">
-          Powered by Cloudflare Workers & WebRTC
-        </p>
       </div>
     </div>
   );

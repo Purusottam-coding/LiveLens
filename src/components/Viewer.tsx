@@ -7,7 +7,8 @@ import {
   Maximize2,
   RefreshCw,
   ShieldCheck,
-  Wifi,
+  Play,
+  ArrowLeft,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useSignaling, SignalingMessage } from '../hooks/useSignaling';
@@ -27,7 +28,32 @@ function generateRandomCode(): string {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
-export default function Viewer() {
+function fallbackCopy(text: string, onSuccess?: () => void) {
+  try {
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    textArea.style.position = 'fixed';
+    textArea.style.top = '-9999px';
+    textArea.style.left = '-9999px';
+    textArea.setAttribute('readonly', '');
+    document.body.appendChild(textArea);
+    textArea.select();
+    textArea.setSelectionRange(0, 99999);
+    const successful = document.execCommand('copy');
+    document.body.removeChild(textArea);
+    if (successful) {
+      onSuccess?.();
+    }
+  } catch (err) {
+    console.warn('Fallback copy failed:', err);
+  }
+}
+
+interface ViewerProps {
+  onExit?: () => void;
+}
+
+export default function Viewer({ onExit }: ViewerProps = {}) {
   const [roomCode, setRoomCode] = useState<string>(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved && /^\d{6}$/.test(saved)) {
@@ -41,6 +67,8 @@ export default function Viewer() {
   const [status, setStatus] = useState<'waiting' | 'connected'>('waiting');
   const [isPhonePaired, setIsPhonePaired] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [hasVideoTrack, setHasVideoTrack] = useState(false);
+  const [needsUserInteraction, setNeedsUserInteraction] = useState(false);
   const [videoTransform, setVideoTransform] = useState<VideoTransform>({
     rotation: 0,
     mirrorX: false,
@@ -52,6 +80,7 @@ export default function Viewer() {
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const iceCandidateQueue = useRef<RTCIceCandidateInit[]>([]);
+  const sendRef = useRef<(type: string, payload?: any) => void>(() => {});
 
   // Regenerate new room code
   const handleGenerateNewCode = () => {
@@ -60,13 +89,9 @@ export default function Viewer() {
     setRoomCode(newCode);
     setIsPhonePaired(false);
     setStatus('waiting');
-    if (remoteVideoRef.current) {
-      remoteVideoRef.current.srcObject = null;
-    }
-    if (pcRef.current) {
-      pcRef.current.close();
-      pcRef.current = null;
-    }
+    setHasVideoTrack(false);
+    setNeedsUserInteraction(false);
+    cleanupPeerConnection();
   };
 
   const cleanupPeerConnection = useCallback(() => {
@@ -78,13 +103,18 @@ export default function Viewer() {
     if (remoteVideoRef.current) {
       remoteVideoRef.current.srcObject = null;
     }
+    setHasVideoTrack(false);
   }, []);
 
   const flushIceCandidates = useCallback(async () => {
     while (iceCandidateQueue.current.length > 0) {
       const cand = iceCandidateQueue.current.shift();
-      if (cand && pcRef.current) {
-        await pcRef.current.addIceCandidate(new RTCIceCandidate(cand)).catch(console.warn);
+      if (cand && pcRef.current && pcRef.current.remoteDescription) {
+        try {
+          await pcRef.current.addIceCandidate(new RTCIceCandidate(cand));
+        } catch (err) {
+          console.warn('[Viewer] Could not add queued ICE candidate:', err);
+        }
       }
     }
   }, []);
@@ -101,28 +131,72 @@ export default function Viewer() {
 
     pc.onicecandidate = ({ candidate }) => {
       if (candidate) {
-        send('ice-candidate', candidate);
+        const cand = candidate.toJSON ? candidate.toJSON() : {
+          candidate: candidate.candidate,
+          sdpMid: candidate.sdpMid,
+          sdpMLineIndex: candidate.sdpMLineIndex,
+        };
+        sendRef.current('ice-candidate', cand);
       }
     };
 
     pc.ontrack = (event) => {
-      console.log('[Viewer] Remote track received:', event.streams);
-      if (remoteVideoRef.current && event.streams[0]) {
-        remoteVideoRef.current.srcObject = event.streams[0];
-        remoteVideoRef.current.play().catch(console.warn);
-        setStatus('connected');
-        setIsPhonePaired(true);
+      console.log('[Viewer] Remote track received:', event);
+      // Support both event.streams[0] and direct MediaStream([event.track])
+      const stream = (event.streams && event.streams[0])
+        ? event.streams[0]
+        : new MediaStream([event.track]);
+
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = stream;
+        remoteVideoRef.current.muted = true;
+        remoteVideoRef.current.defaultMuted = true;
+        remoteVideoRef.current
+          .play()
+          .then(() => {
+            setNeedsUserInteraction(false);
+          })
+          .catch((err) => {
+            console.warn('[Viewer] Autoplay blocked, needs click:', err);
+            setNeedsUserInteraction(true);
+          });
       }
+
+      setHasVideoTrack(true);
+      setStatus('connected');
+      setIsPhonePaired(true);
+
+      // Listen for un-mute when the first camera frames arrive
+      event.track.onunmute = () => {
+        console.log('[Viewer] Track unmuted (frames flowing)');
+        if (remoteVideoRef.current) {
+          remoteVideoRef.current.play().catch(console.warn);
+        }
+        setHasVideoTrack(true);
+        setStatus('connected');
+      };
     };
 
     pc.onconnectionstatechange = () => {
       console.log('[Viewer] WebRTC connectionState:', pc.connectionState);
-      if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+      if (pc.connectionState === 'connected') {
+        setStatus('connected');
+        setIsPhonePaired(true);
+      } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
         setStatus('waiting');
         setIsPhonePaired(false);
+        setHasVideoTrack(false);
         if (remoteVideoRef.current) {
           remoteVideoRef.current.srcObject = null;
         }
+      }
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      console.log('[Viewer] WebRTC iceConnectionState:', pc.iceConnectionState);
+      if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+        setStatus('connected');
+        setIsPhonePaired(true);
       }
     };
 
@@ -138,12 +212,13 @@ export default function Viewer() {
         if (msg.type === 'phone-paired') {
           console.log('[Viewer] Phone paired notification');
           setIsPhonePaired(true);
+          // Acknowledge presence to phone
+          sendRef.current('peer-joined', { role: 'viewer' });
         } else if (msg.type === 'peer-joined') {
           if (msg.payload?.role === 'broadcaster') {
             console.log('[Viewer] Broadcaster joined room');
             setIsPhonePaired(true);
-            // Notify broadcaster that viewer is here
-            send('peer-joined', { role: 'viewer' });
+            sendRef.current('peer-joined', { role: 'viewer' });
           }
         } else if (msg.type === 'video-transform') {
           console.log('[Viewer] Received video-transform:', msg.payload);
@@ -165,18 +240,26 @@ export default function Viewer() {
             pc = setupPeerConnection();
           }
 
-          await pc.setRemoteDescription(new RTCSessionDescription(msg.payload));
+          const offerDesc = new RTCSessionDescription(msg.payload);
+          await pc.setRemoteDescription(offerDesc);
           await flushIceCandidates();
 
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
 
           console.log('[Viewer] Sending answer to broadcaster');
-          send('answer', pc.localDescription);
+          const answerPayload = pc.localDescription?.toJSON
+            ? pc.localDescription.toJSON()
+            : { type: pc.localDescription?.type, sdp: pc.localDescription?.sdp };
+          sendRef.current('answer', answerPayload);
         } else if (msg.type === 'ice-candidate') {
           const pc = pcRef.current;
-          if (pc && pc.remoteDescription?.type) {
-            await pc.addIceCandidate(new RTCIceCandidate(msg.payload)).catch(console.warn);
+          if (pc && pc.remoteDescription && pc.remoteDescription.type) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(msg.payload));
+            } catch (err) {
+              console.warn('[Viewer] addIceCandidate error:', err);
+            }
           } else {
             iceCandidateQueue.current.push(msg.payload);
           }
@@ -185,11 +268,11 @@ export default function Viewer() {
         console.warn('[Viewer] Error handling message:', err);
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [setupPeerConnection, flushIceCandidates, cleanupPeerConnection]
   );
 
   const { isConnected, send } = useSignaling(roomCode, handleSignalingMessage);
+  sendRef.current = send;
 
   // Announce presence when connected
   useEffect(() => {
@@ -199,10 +282,18 @@ export default function Viewer() {
   }, [isConnected, roomCode, send]);
 
   const copyCode = useCallback(() => {
-    navigator.clipboard.writeText(roomCode).then(() => {
+    const handleSuccess = () => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2500);
-    });
+    };
+
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(roomCode)
+        .then(handleSuccess)
+        .catch(() => fallbackCopy(roomCode, handleSuccess));
+    } else {
+      fallbackCopy(roomCode, handleSuccess);
+    }
   }, [roomCode]);
 
   const toggleFullscreen = useCallback(() => {
@@ -213,11 +304,21 @@ export default function Viewer() {
     }
   }, []);
 
+  const handleManualPlay = () => {
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.muted = true;
+      remoteVideoRef.current.play().then(() => {
+        setNeedsUserInteraction(false);
+      }).catch(console.warn);
+    }
+  };
+
   const cameraUrl = `${window.location.origin}/camera?code=${roomCode}`;
+  const isVideoLive = status === 'connected' || hasVideoTrack;
 
   return (
     <div ref={containerRef} className="min-h-screen bg-[#080c14] flex flex-col relative select-none">
-      {/* ── Remote Fullscreen Video (connected) ── */}
+      {/* ── Remote Fullscreen Video ── */}
       <video
         ref={remoteVideoRef}
         autoPlay
@@ -227,19 +328,51 @@ export default function Viewer() {
           transform: `rotate(${videoTransform.rotation}deg) scaleX(${videoTransform.mirrorX ? -1 : 1}) scaleY(${videoTransform.mirrorY ? -1 : 1}) scale(${videoTransform.zoom || 1})`,
           transition: 'transform 0.2s ease-out',
         }}
-        className={`fixed inset-0 w-full h-full object-contain bg-black transition-opacity duration-700 ${
-          status === 'connected' ? 'opacity-100 z-10' : 'opacity-0 pointer-events-none'
+        className={`fixed inset-0 w-full h-full object-contain bg-black transition-opacity duration-500 ${
+          isVideoLive ? 'opacity-100 z-10' : 'opacity-0 pointer-events-none'
         }`}
       />
 
+      {/* Manual play overlay if browser blocked autoplay */}
+      {isVideoLive && needsUserInteraction && (
+        <div
+          onClick={handleManualPlay}
+          className="fixed inset-0 z-30 flex items-center justify-center bg-black/60 backdrop-blur-sm cursor-pointer"
+        >
+          <div className="flex items-center gap-3 px-6 py-4 rounded-3xl bg-brand-500 text-white font-bold shadow-2xl animate-bounce">
+            <Play className="w-6 h-6 fill-current" />
+            <span>Click to Show Live Video</span>
+          </div>
+        </div>
+      )}
+
       {/* ── Top Bar ── */}
       <header className="relative z-20 flex items-center justify-between px-6 sm:px-8 py-4 sm:py-5 gap-3">
-        <div className="flex items-center gap-3 px-5 sm:px-6 py-3 rounded-2xl bg-white/12 backdrop-blur-md border border-white/20 text-white font-bold text-base sm:text-lg shadow-lg">
-          <Monitor className="w-5 h-5 text-brand-400" />
-          <span>Projector Display</span>
+        <div className="flex items-center gap-2">
+          {onExit && (
+            <button
+              onClick={onExit}
+              title="Return to mode selection"
+              className="flex items-center gap-1.5 px-3 sm:px-4 py-3 rounded-2xl bg-white/10 hover:bg-white/20 active:scale-95 backdrop-blur-md border border-white/15 text-white/80 hover:text-white text-xs sm:text-sm font-semibold transition shadow-lg"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span className="hidden sm:inline">Modes</span>
+            </button>
+          )}
+
+          <div className="flex items-center gap-2.5 sm:gap-3 px-4 sm:px-6 py-3 rounded-2xl bg-white/12 backdrop-blur-md border border-white/20 text-white font-bold text-sm sm:text-lg shadow-lg">
+            <Monitor className="w-5 h-5 text-brand-400" />
+            <span>Projector Display</span>
+            {isVideoLive && (
+              <span className="flex items-center gap-1.5 text-xs font-mono text-green-400 bg-green-500/20 px-2.5 py-0.5 rounded-full border border-green-500/30">
+                <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+                LIVE
+              </span>
+            )}
+          </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3">
           <button
             onClick={handleGenerateNewCode}
             title="Generate new pairing code"
@@ -261,7 +394,7 @@ export default function Viewer() {
       </header>
 
       {/* ── Waiting Screen (Pairing Card & QR Code) ── */}
-      {status === 'waiting' && (
+      {!isVideoLive && (
         <div className="flex-1 flex flex-col items-center justify-center p-6 relative z-10">
           <div className="w-full max-w-lg bg-surface-800/90 backdrop-blur-xl border border-surface-700 rounded-3xl p-8 shadow-2xl flex flex-col items-center gap-7">
             {/* Phone paired indicator banner */}
@@ -286,24 +419,37 @@ export default function Viewer() {
             {/* 6-Digit Pairing Code Display */}
             <div className="flex flex-col items-center gap-2 w-full">
               <span className="text-xs font-bold uppercase tracking-widest text-slate-400">
-                Pairing Code
+                Pairing Code (Click to Copy)
               </span>
-              <div className="flex items-center justify-center gap-3 bg-surface-900 border-2 border-surface-700 rounded-2xl px-6 py-4 w-full">
-                <span className="text-4xl sm:text-5xl font-mono font-black text-brand-400 tracking-[0.3em]">
+              <div
+                onClick={copyCode}
+                title="Click to copy code"
+                className="flex items-center justify-center gap-3 bg-surface-900 hover:bg-surface-800 border-2 border-surface-700 hover:border-brand-500 rounded-2xl px-6 py-4 w-full cursor-pointer transition-all group shadow-inner"
+              >
+                <span className="text-4xl sm:text-5xl font-mono font-black text-brand-400 tracking-[0.3em] select-all">
                   {roomCode}
                 </span>
                 <button
-                  onClick={copyCode}
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    copyCode();
+                  }}
                   title="Copy code"
-                  className="p-2.5 rounded-xl bg-surface-700/80 hover:bg-surface-600 text-slate-300 hover:text-white transition active:scale-95"
+                  className="p-2.5 rounded-xl bg-surface-700/80 group-hover:bg-brand-500 text-slate-300 group-hover:text-white transition active:scale-95"
                 >
                   {copied ? (
-                    <Check className="w-5 h-5 text-green-400" />
+                    <Check className="w-5 h-5 text-green-400 group-hover:text-white" />
                   ) : (
                     <Copy className="w-5 h-5" />
                   )}
                 </button>
               </div>
+              {copied && (
+                <span className="text-xs font-bold text-green-400 animate-in fade-in">
+                  Code copied to clipboard!
+                </span>
+              )}
             </div>
 
             {/* QR Code */}
@@ -323,7 +469,9 @@ export default function Viewer() {
 
             <div className="flex items-center gap-2 text-xs text-slate-400">
               <span className="w-2 h-2 rounded-full bg-brand-400 animate-ping" />
-              <span>Waiting for phone connection…</span>
+              <span>
+                {isPhonePaired ? 'Starting camera broadcast…' : 'Waiting for phone connection…'}
+              </span>
             </div>
           </div>
         </div>

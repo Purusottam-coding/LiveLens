@@ -2,7 +2,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "livelens",
   "main": "src/worker/index.ts",
-  "compatibility_date": "2026-10-01",
+  "compatibility_date": "2025-03-21",
   "assets": {
     "directory": "./dist",
     "not_found_handling": "single-page-application"
