@@ -154,6 +154,14 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
         setHasVideoTrack(true);
       }
 
+      const stream = (event.streams && event.streams[0]) ? event.streams[0] : null;
+      if (stream && remoteVideoRef.current) {
+        if (remoteVideoRef.current.srcObject !== stream) {
+          remoteVideoRef.current.srcObject = stream;
+        }
+        remoteVideoRef.current.play().catch(() => setNeedsUserInteraction(true));
+      }
+
       setRemoteStream((prevStream) => {
         if (event.streams && event.streams[0]) {
           return event.streams[0];
