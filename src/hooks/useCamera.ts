@@ -116,9 +116,12 @@ export function useCamera({ enabled, quality }: UseCameraOptions) {
     }
 
     const audioConstraints: MediaTrackConstraints = {
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true,
+      echoCancellation: { ideal: true },
+      noiseSuppression: { ideal: false }, // Avoid aggressive mobile noise gating that clips speech
+      autoGainControl: { ideal: false },   // Avoid pulsating volume ducking & cutouts
+      sampleRate: { ideal: 48000 },
+      channelCount: { ideal: 1 },
+      latency: { ideal: 0.01 }, // 10ms low-latency audio capture
     };
 
     const getMedia = async () => {

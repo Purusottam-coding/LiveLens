@@ -14,7 +14,7 @@ import { useCamera } from '../hooks/useCamera';
 import { useSignaling, SignalingMessage } from '../hooks/useSignaling';
 import Controls, { Quality, QUALITY_OPTIONS } from './Controls';
 import type { VideoTransform } from '../types';
-import { ICE_SERVERS } from '../config/webrtc';
+import { ICE_SERVERS, optimizeOpusSdp } from '../config/webrtc';
 
 interface BroadcasterProps {
   initialCode?: string;
@@ -98,7 +98,7 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
     }
   }, []);
 
-  // Send WebRTC offer helper
+  // Send WebRTC offer helper with optimized Opus audio
   const sendOffer = useCallback(async (pc: RTCPeerConnection) => {
     try {
       console.log('[Broadcaster] Creating WebRTC offer');
@@ -106,12 +106,20 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
         offerToReceiveAudio: false,
         offerToReceiveVideo: false,
       });
-      await pc.setLocalDescription(offer);
-      console.log('[Broadcaster] Sending offer to viewer');
-      const desc = pc.localDescription?.toJSON
-        ? pc.localDescription.toJSON()
-        : { type: pc.localDescription?.type, sdp: pc.localDescription?.sdp };
-      sendRef.current('offer', desc);
+
+      // Enhance Opus audio SDP parameters for crystal-clear, low-latency, cutout-free audio
+      const optimizedSdp = optimizeOpusSdp(offer.sdp || '');
+      const optimizedOffer = new RTCSessionDescription({
+        type: offer.type,
+        sdp: optimizedSdp,
+      });
+
+      await pc.setLocalDescription(optimizedOffer);
+      console.log('[Broadcaster] Sending optimized offer to viewer');
+      sendRef.current('offer', {
+        type: optimizedOffer.type,
+        sdp: optimizedOffer.sdp,
+      });
     } catch (err) {
       console.error('[Broadcaster] Error sending offer:', err);
     }
@@ -156,9 +164,28 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
       }
     };
 
-    // Add all tracks from the camera stream
+    // Add all tracks from the camera stream with prioritized audio
     currentStream.getTracks().forEach((track) => {
-      pc.addTrack(track, currentStream);
+      const sender = pc.addTrack(track, currentStream);
+      try {
+        const params = sender.getParameters?.();
+        if (params) {
+          if (!params.encodings || params.encodings.length === 0) {
+            params.encodings = [{}];
+          }
+          if (track.kind === 'audio') {
+            // Prioritize audio packets so heavy video bursts never starve sound
+            params.encodings[0].maxBitrate = 96000;
+            params.encodings[0].priority = 'high';
+            params.encodings[0].networkPriority = 'high';
+          } else if (track.kind === 'video') {
+            params.encodings[0].maxBitrate = 2500000;
+            params.encodings[0].priority = 'medium';
+            params.encodings[0].networkPriority = 'medium';
+          }
+          sender.setParameters?.(params).catch(() => {});
+        }
+      } catch (e) {}
     });
 
     // Send initial offer

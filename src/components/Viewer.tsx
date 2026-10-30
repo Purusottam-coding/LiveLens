@@ -16,7 +16,7 @@ import {
 import { QRCodeSVG } from 'qrcode.react';
 import { useSignaling, SignalingMessage } from '../hooks/useSignaling';
 import type { VideoTransform } from '../types';
-import { ICE_SERVERS } from '../config/webrtc';
+import { ICE_SERVERS, optimizeOpusSdp } from '../config/webrtc';
 
 const STORAGE_KEY = 'livelens_viewer_room_code';
 
@@ -152,6 +152,15 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
       console.log('[Viewer] Remote track received:', event.track.kind);
       if (event.track.kind === 'video') {
         setHasVideoTrack(true);
+      }
+
+      // Eliminate audio latency and jitter-buffer lag
+      if (event.receiver) {
+        try {
+          if ('playoutDelayHint' in event.receiver) {
+            (event.receiver as any).playoutDelayHint = 0;
+          }
+        } catch (e) {}
       }
 
       const stream = (event.streams && event.streams[0]) ? event.streams[0] : null;
@@ -337,14 +346,19 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
           await pc.setRemoteDescription(offerDesc);
 
           const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
+          const optimizedSdp = optimizeOpusSdp(answer.sdp || '');
+          const optimizedAnswer = new RTCSessionDescription({
+            type: answer.type,
+            sdp: optimizedSdp,
+          });
+          await pc.setLocalDescription(optimizedAnswer);
           await flushIceCandidates();
 
-          console.log('[Viewer] Sending answer to broadcaster');
-          const answerPayload = pc.localDescription?.toJSON
-            ? pc.localDescription.toJSON()
-            : { type: pc.localDescription?.type, sdp: pc.localDescription?.sdp };
-          sendRef.current('answer', answerPayload);
+          console.log('[Viewer] Sending optimized answer to broadcaster');
+          sendRef.current('answer', {
+            type: optimizedAnswer.type,
+            sdp: optimizedAnswer.sdp,
+          });
         } else if (msg.type === 'ice-candidate') {
           if (!msg.payload || !msg.payload.candidate) return;
           const pc = pcRef.current;
