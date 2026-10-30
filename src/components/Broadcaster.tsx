@@ -9,6 +9,8 @@ import {
   Play,
   User,
   ArrowLeft,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import { useCamera } from '../hooks/useCamera';
 import { useSignaling, SignalingMessage } from '../hooks/useSignaling';
@@ -43,6 +45,9 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const iceCandidateQueue = useRef<RTCIceCandidateInit[]>([]);
   const sendRef = useRef<(type: string, payload?: any) => void>(() => {});
+  const incomingAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [hasIncomingAudio, setHasIncomingAudio] = useState(false);
+  const [isIncomingAudioMuted, setIsIncomingAudioMuted] = useState(false);
   const statusRef = useRef<Status>(status);
   statusRef.current = status;
   const pairingTimeoutRef = useRef<number | null>(null);
@@ -103,7 +108,7 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
     try {
       console.log('[Broadcaster] Creating WebRTC offer');
       const offer = await pc.createOffer({
-        offerToReceiveAudio: false,
+        offerToReceiveAudio: true, // Enables incoming talkback audio from Projector/Viewer
         offerToReceiveVideo: false,
       });
 
@@ -152,6 +157,21 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
 
     pc.onconnectionstatechange = () => {
       console.log('[Broadcaster] WebRTC connectionState:', pc.connectionState);
+    };
+
+        // Listen for incoming talkback audio track from Projector/Viewer
+    pc.ontrack = (event) => {
+      console.log('[Broadcaster] Incoming track from Projector:', event.track.kind);
+      if (event.track.kind === 'audio') {
+        setHasIncomingAudio(true);
+        const incomingStream = (event.streams && event.streams[0])
+          ? event.streams[0]
+          : new MediaStream([event.track]);
+        if (incomingAudioRef.current) {
+          incomingAudioRef.current.srcObject = incomingStream;
+          incomingAudioRef.current.play().catch(console.warn);
+        }
+      }
     };
 
     pc.oniceconnectionstatechange = () => {
@@ -421,6 +441,9 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
       className="min-h-screen bg-[#0a0a0a] flex flex-col relative overflow-hidden touch-none select-none"
     >
       {/* Live camera video element */}
+      {/* Incoming talkback audio from Projector/Viewer */}
+      <audio ref={incomingAudioRef} autoPlay playsInline />
+
       <video
         ref={localVideoRef}
         autoPlay
@@ -468,6 +491,27 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
                     <span className="text-white/30">•</span>
                     <span className="font-mono text-white/90">#{code}</span>
                   </>
+                )}
+                {hasIncomingAudio && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsIncomingAudioMuted((prev) => {
+                        const next = !prev;
+                        if (incomingAudioRef.current) incomingAudioRef.current.muted = next;
+                        return next;
+                      });
+                    }}
+                    title={isIncomingAudioMuted ? 'Projector Audio Muted (Tap to hear)' : 'Projector Audio Live (Tap to mute)'}
+                    className="flex items-center gap-1 text-xs text-white/90 hover:text-white transition ml-1"
+                  >
+                    {isIncomingAudioMuted ? (
+                      <VolumeX className="w-3.5 h-3.5 text-neutral-400" />
+                    ) : (
+                      <Volume2 className="w-3.5 h-3.5 text-white animate-pulse" />
+                    )}
+                    <span className="text-[11px] font-mono">2-Way</span>
+                  </button>
                 )}
               </>
             ) : status === 'paired' ? (

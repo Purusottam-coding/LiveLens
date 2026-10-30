@@ -12,6 +12,8 @@ import {
   ArrowLeft,
   Volume2,
   VolumeX,
+  Mic,
+  MicOff,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useSignaling, SignalingMessage } from '../hooks/useSignaling';
@@ -68,6 +70,9 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
   const [isAudioMuted, setIsAudioMuted] = useState(true);
   const [needsUserInteraction, setNeedsUserInteraction] = useState(false);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const [isTalkbackActive, setIsTalkbackActive] = useState(false);
+  const [isTalkbackMuted, setIsTalkbackMuted] = useState(false);
+  const talkbackStreamRef = useRef<MediaStream | null>(null);
 
   const [videoTransform, setVideoTransform] = useState<VideoTransform>({
     rotation: 0,
@@ -95,7 +100,51 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
     cleanupPeerConnection();
   };
 
-  const cleanupPeerConnection = useCallback(() => {
+    // Two-Way Communication: Toggle Viewer/Projector Microphone
+  const toggleTalkbackMic = useCallback(async () => {
+    try {
+      if (!talkbackStreamRef.current) {
+        // Request microphone access for two-way audio with echo cancellation
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: { ideal: true },
+            noiseSuppression: { ideal: true },
+            autoGainControl: { ideal: true },
+            sampleRate: { ideal: 48000 },
+            latency: { ideal: 0.01 },
+          },
+        });
+        talkbackStreamRef.current = stream;
+        setIsTalkbackActive(true);
+        setIsTalkbackMuted(false);
+
+        // Attach audio track to peer connection
+        if (pcRef.current) {
+          const track = stream.getAudioTracks()[0];
+          if (track) {
+            const senders = pcRef.current.getSenders();
+            const audioSender = senders.find((s) => s.track?.kind === 'audio');
+            if (audioSender) {
+              await audioSender.replaceTrack(track);
+            } else {
+              pcRef.current.addTrack(track, stream);
+              sendRef.current('request-stream', { role: 'viewer', restart: false });
+            }
+          }
+        }
+      } else {
+        const nextMuted = !isTalkbackMuted;
+        setIsTalkbackMuted(nextMuted);
+        talkbackStreamRef.current.getAudioTracks().forEach((track) => {
+          track.enabled = !nextMuted;
+        });
+      }
+    } catch (err) {
+      console.warn('[Viewer] Could not access microphone for talkback:', err);
+    }
+  }, [isTalkbackMuted]);
+
+const cleanupPeerConnection = useCallback(() => {
     if (pcRef.current) {
       pcRef.current.close();
       pcRef.current = null;
@@ -108,6 +157,12 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
     if (remoteVideoRef.current) {
       remoteVideoRef.current.srcObject = null;
     }
+    if (talkbackStreamRef.current) {
+      talkbackStreamRef.current.getTracks().forEach((t) => t.stop());
+      talkbackStreamRef.current = null;
+    }
+    setIsTalkbackActive(false);
+    setIsTalkbackMuted(false);
   }, []);
 
   const flushIceCandidates = useCallback(async () => {
@@ -136,6 +191,14 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
     console.log('[Viewer] Setting up new RTCPeerConnection with STUN & TURN');
     const pc = new RTCPeerConnection(ICE_SERVERS);
     pcRef.current = pc;
+
+        // Attach talkback track if active for two-way audio
+    if (talkbackStreamRef.current) {
+      const talkTrack = talkbackStreamRef.current.getAudioTracks()[0];
+      if (talkTrack) {
+        pc.addTrack(talkTrack, talkbackStreamRef.current);
+      }
+    }
 
     pc.onicecandidate = ({ candidate }) => {
       if (candidate) {
@@ -344,6 +407,18 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
 
           const offerDesc = new RTCSessionDescription(msg.payload);
           await pc.setRemoteDescription(offerDesc);
+
+          // Attach talkback track to answer if active
+          if (talkbackStreamRef.current) {
+            const track = talkbackStreamRef.current.getAudioTracks()[0];
+            if (track) {
+              const senders = pc.getSenders();
+              const hasAudioSender = senders.some((s) => s.track?.kind === 'audio');
+              if (!hasAudioSender) {
+                pc.addTrack(track, talkbackStreamRef.current);
+              }
+            }
+          }
 
           const answer = await pc.createAnswer();
           const optimizedSdp = optimizeOpusSdp(answer.sdp || '');
@@ -606,6 +681,28 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
               <Volume2 className="w-5 h-5 text-white" />
             )}
           </button>
+                    {/* Fullscreen Talkback Mic Button */}
+          <button
+            onClick={toggleTalkbackMic}
+            title={
+              !isTalkbackActive
+                ? 'Enable Mic (Talk to Phone)'
+                : isTalkbackMuted
+                ? 'Unmute Mic'
+                : 'Mute Mic'
+            }
+            className={`p-3 rounded-xl backdrop-blur-md border transition-all active:scale-95 ${
+              !isTalkbackActive || isTalkbackMuted
+                ? 'bg-black/75 hover:bg-black/90 text-white/70 border-white/20'
+                : 'bg-white text-black font-bold shadow-md border-white'
+            }`}
+          >
+            {!isTalkbackActive || isTalkbackMuted ? (
+              <MicOff className="w-5 h-5 text-neutral-400" />
+            ) : (
+              <Mic className="w-5 h-5 text-black animate-pulse" />
+            )}
+          </button>
           <button
             onClick={toggleFullscreen}
             title="Exit Fullscreen (ESC or Double-Click anywhere)"
@@ -644,6 +741,39 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3">
+                        {/* Two-Way Talkback Mic Toggle */}
+            {isVideoLive && (
+              <button
+                type="button"
+                onClick={toggleTalkbackMic}
+                title={
+                  !isTalkbackActive
+                    ? 'Enable Microphone (Talk to Phone)'
+                    : isTalkbackMuted
+                    ? 'Microphone Muted (Click to Talk)'
+                    : 'Microphone Live (Click to Mute)'
+                }
+                className={`flex items-center gap-2 px-3 sm:px-4 py-2.5 rounded-xl backdrop-blur-md border transition active:scale-95 text-xs sm:text-sm font-medium ${
+                  !isTalkbackActive || isTalkbackMuted
+                    ? 'bg-white/10 hover:bg-white/15 border-white/10 text-neutral-300'
+                    : 'bg-white text-black font-semibold shadow-md border-white'
+                }`}
+              >
+                {!isTalkbackActive || isTalkbackMuted ? (
+                  <MicOff className="w-4 h-4 text-neutral-400" />
+                ) : (
+                  <Mic className="w-4 h-4 text-black animate-pulse" />
+                )}
+                <span className="hidden sm:inline">
+                  {!isTalkbackActive
+                    ? 'Talk to Phone'
+                    : isTalkbackMuted
+                    ? 'Mic Muted'
+                    : 'Talking Live'}
+                </span>
+              </button>
+            )}
+
             {/* Speaker Audio Mute / Unmute Toggle */}
             {isVideoLive && (
               <button
