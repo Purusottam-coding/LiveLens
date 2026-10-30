@@ -34,6 +34,7 @@ export function useSignaling(
     }
 
     let isDisposed = false;
+    let pingInterval: number | null = null;
 
     function connect() {
       if (isDisposed) return;
@@ -51,11 +52,22 @@ export function useSignaling(
         }
         console.log('[Signaling] Connected to room:', roomCode);
         setIsConnected(true);
+
+        // Keep WebSocket connection alive with 15s ping heartbeat
+        if (pingInterval) clearInterval(pingInterval);
+        pingInterval = window.setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'ping' }));
+          }
+        }, 15000);
       };
 
       ws.onmessage = (event) => {
         try {
           const data: SignalingMessage = JSON.parse(event.data);
+          if (data.type === 'pong' || data.type === 'ping') {
+            return; // Ignore internal heartbeat
+          }
           onMessageRef.current?.(data);
         } catch (err) {
           console.error('[Signaling] Failed to parse message:', event.data, err);
@@ -67,6 +79,7 @@ export function useSignaling(
       };
 
       ws.onclose = () => {
+        if (pingInterval) clearInterval(pingInterval);
         console.log('[Signaling] WebSocket closed');
         setIsConnected(false);
         if (!isDisposed) {
@@ -79,6 +92,7 @@ export function useSignaling(
 
     return () => {
       isDisposed = true;
+      if (pingInterval) clearInterval(pingInterval);
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }

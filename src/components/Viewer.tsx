@@ -5,10 +5,13 @@ import {
   Copy,
   Check,
   Maximize2,
+  Minimize2,
   RefreshCw,
   ShieldCheck,
   Play,
   ArrowLeft,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useSignaling, SignalingMessage } from '../hooks/useSignaling';
@@ -62,6 +65,7 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
   const [copied, setCopied] = useState(false);
   const [hasVideoTrack, setHasVideoTrack] = useState(false);
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
+  const [isAudioMuted, setIsAudioMuted] = useState(true);
   const [needsUserInteraction, setNeedsUserInteraction] = useState(false);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
 
@@ -122,8 +126,12 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
   // WebRTC setup helper
   const setupPeerConnection = useCallback(() => {
     if (pcRef.current) {
-      pcRef.current.close();
+      try {
+        pcRef.current.close();
+      } catch (e) {}
+      pcRef.current = null;
     }
+    iceCandidateQueue.current = [];
 
     console.log('[Viewer] Setting up new RTCPeerConnection with STUN & TURN');
     const pc = new RTCPeerConnection(ICE_SERVERS);
@@ -142,20 +150,34 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
 
     pc.ontrack = (event) => {
       console.log('[Viewer] Remote track received:', event.track.kind);
-      const stream = (event.streams && event.streams[0])
-        ? event.streams[0]
-        : new MediaStream([event.track]);
+      if (event.track.kind === 'video') {
+        setHasVideoTrack(true);
+      }
 
-      setRemoteStream(stream);
-      setHasVideoTrack(true);
+      setRemoteStream((prevStream) => {
+        if (event.streams && event.streams[0]) {
+          return event.streams[0];
+        }
+        if (prevStream) {
+          prevStream.addTrack(event.track);
+          return new MediaStream(prevStream.getTracks());
+        }
+        return new MediaStream([event.track]);
+      });
+
       setStatus('connected');
       setIsPhonePaired(true);
 
-      // Listen for un-mute when camera frames start arriving
+      // Listen for un-mute when media frames start arriving
       event.track.onunmute = () => {
-        console.log('[Viewer] Remote track unmuted, frames arriving');
-        setHasVideoTrack(true);
-        setStatus('connected');
+        console.log(`[Viewer] Remote ${event.track.kind} track unmuted`);
+        if (event.track.kind === 'video') {
+          setHasVideoTrack(true);
+          if (remoteVideoRef.current && remoteVideoRef.current.videoWidth > 0) {
+            setIsVideoPlaying(true);
+            setNeedsUserInteraction(false);
+          }
+        }
         if (remoteVideoRef.current) {
           remoteVideoRef.current.play().catch(() => setNeedsUserInteraction(true));
         }
@@ -184,16 +206,42 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
         setStatus('connected');
         setIsPhonePaired(true);
         if (remoteVideoRef.current) {
-          remoteVideoRef.current.play().catch(() => setNeedsUserInteraction(true));
+          remoteVideoRef.current.play().then(() => {
+            if (remoteVideoRef.current && remoteVideoRef.current.videoWidth > 0) {
+              setIsVideoPlaying(true);
+              setNeedsUserInteraction(false);
+            }
+          }).catch(() => setNeedsUserInteraction(true));
         }
       } else if (pc.iceConnectionState === 'failed') {
         console.warn('[Viewer] ICE connection failed. Requesting restart from phone camera...');
+        sendRef.current('request-stream', { role: 'viewer', restart: true });
         sendRef.current('peer-joined', { role: 'viewer', restart: true });
       }
     };
 
     return pc;
   }, []);
+
+  const checkVideoFramePlaying = useCallback((video: HTMLVideoElement | null) => {
+    if (video && video.videoWidth > 0 && video.videoHeight > 0) {
+      setIsVideoPlaying(true);
+      setNeedsUserInteraction(false);
+    }
+  }, []);
+
+  // Poll for decoded video frame dimensions while waiting for playback
+  useEffect(() => {
+    if (!hasVideoTrack || isVideoPlaying) return;
+    const interval = window.setInterval(() => {
+      const v = remoteVideoRef.current;
+      if (v && v.videoWidth > 0 && v.videoHeight > 0) {
+        setIsVideoPlaying(true);
+        setNeedsUserInteraction(false);
+      }
+    }, 400);
+    return () => clearInterval(interval);
+  }, [hasVideoTrack, isVideoPlaying]);
 
   // Bind remote stream to HTML5 video element with mobile-friendly attributes
   useEffect(() => {
@@ -204,9 +252,9 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
       if (video.srcObject !== remoteStream) {
         video.srcObject = remoteStream;
       }
-      video.muted = true;
-      video.defaultMuted = true;
-      video.volume = 0;
+      video.muted = isAudioMuted;
+      video.defaultMuted = isAudioMuted;
+      video.volume = isAudioMuted ? 0 : 1;
       video.playsInline = true;
       video.setAttribute('playsinline', 'true');
       video.setAttribute('webkit-playsinline', 'true');
@@ -214,17 +262,20 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
       video.setAttribute('x5-video-player-type', 'h5');
 
       video.play().then(() => {
-        setIsVideoPlaying(true);
-        setNeedsUserInteraction(false);
+        checkVideoFramePlaying(video);
       }).catch((err) => {
-        console.warn('[Viewer] Autoplay blocked, click required:', err);
-        setNeedsUserInteraction(true);
+        console.warn('[Viewer] Unmuted play blocked, trying muted play:', err);
+        video.muted = true;
+        setIsAudioMuted(true);
+        video.play().then(() => {
+          checkVideoFramePlaying(video);
+        }).catch(() => setNeedsUserInteraction(true));
       });
     } else {
       video.srcObject = null;
       setIsVideoPlaying(false);
     }
-  }, [remoteStream]);
+  }, [remoteStream, isAudioMuted, checkVideoFramePlaying]);
 
   // Message handler
   const handleSignalingMessage = useCallback(
@@ -232,10 +283,11 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
       console.log('[Viewer] Received signal:', msg.type);
 
       try {
-        if (msg.type === 'phone-paired') {
-          console.log('[Viewer] Phone paired notification');
+        if (msg.type === 'phone-paired' || msg.type === 'pair-request') {
+          console.log('[Viewer] Phone pair request received');
           setIsPhonePaired(true);
           // Acknowledge presence to phone
+          sendRef.current('pair-ack', { code: roomCode });
           sendRef.current('peer-joined', { role: 'viewer' });
         } else if (msg.type === 'peer-joined') {
           if (msg.payload?.role === 'broadcaster') {
@@ -253,9 +305,17 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
           cleanupPeerConnection();
         } else if (msg.type === 'peer-disconnected') {
           console.log('[Viewer] Peer disconnected');
-          setStatus('waiting');
-          setIsPhonePaired(false);
-          cleanupPeerConnection();
+          // If WebRTC is actively streaming video, do not teardown feed on momentary signaling socket reconnect
+          const isWebRTCAlive = pcRef.current && (
+            pcRef.current.connectionState === 'connected' ||
+            pcRef.current.iceConnectionState === 'connected' ||
+            pcRef.current.iceConnectionState === 'completed'
+          );
+          if (!isWebRTCAlive) {
+            setStatus('waiting');
+            setIsPhonePaired(false);
+            cleanupPeerConnection();
+          }
         } else if (msg.type === 'offer') {
           console.log('[Viewer] Handling offer from broadcaster');
           // Always create a clean peer connection for each new broadcast offer
@@ -267,10 +327,10 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
 
           const offerDesc = new RTCSessionDescription(msg.payload);
           await pc.setRemoteDescription(offerDesc);
-          await flushIceCandidates();
 
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
+          await flushIceCandidates();
 
           console.log('[Viewer] Sending answer to broadcaster');
           const answerPayload = pc.localDescription?.toJSON
@@ -322,57 +382,159 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
     }
   }, [roomCode]);
 
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // Track fullscreen changes across all browsers
+  useEffect(() => {
+    const handleFsChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', handleFsChange);
+    document.addEventListener('webkitfullscreenchange', handleFsChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFsChange);
+      document.removeEventListener('webkitfullscreenchange', handleFsChange);
+    };
+  }, []);
+
+  // Prevent browser viewport/page zoom on multi-touch
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const preventBrowserPageZoom = (e: TouchEvent) => {
+      if (e.touches.length > 1) {
+        e.preventDefault();
+      }
+    };
+
+    el.addEventListener('touchmove', preventBrowserPageZoom, { passive: false });
+    return () => {
+      el.removeEventListener('touchmove', preventBrowserPageZoom);
+    };
+  }, []);
+
+  // Pinch-to-zoom video on projector screen (zooms video, not screen)
+  const touchStartDistRef = useRef<number | null>(null);
+  const touchStartZoomRef = useRef<number>(1);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length === 2) {
+      const dist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      touchStartDistRef.current = dist;
+      touchStartZoomRef.current = videoTransform.zoom || 1;
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (e.touches.length === 2 && touchStartDistRef.current !== null) {
+      const currentDist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      const ratio = currentDist / touchStartDistRef.current;
+      const targetZoom = Math.min(5, Math.max(1, Math.round(touchStartZoomRef.current * ratio * 10) / 10));
+      setVideoTransform((prev) => ({ ...prev, zoom: targetZoom }));
+    }
+  };
+
+  const handleTouchEnd = () => {
+    touchStartDistRef.current = null;
+  };
+
   const toggleFullscreen = useCallback(() => {
     if (!document.fullscreenElement) {
-      containerRef.current?.requestFullscreen();
+      if (containerRef.current?.requestFullscreen) {
+        containerRef.current.requestFullscreen();
+      } else if ((remoteVideoRef.current as any)?.webkitRequestFullscreen) {
+        (remoteVideoRef.current as any).webkitRequestFullscreen();
+      }
     } else {
-      document.exitFullscreen();
+      if (document.exitFullscreen) {
+        document.exitFullscreen();
+      } else if ((document as any).webkitExitFullscreen) {
+        (document as any).webkitExitFullscreen();
+      }
+    }
+  }, []);
+
+  const toggleAudioMute = useCallback(() => {
+    const video = remoteVideoRef.current;
+    if (video) {
+      const nextMuted = !video.muted;
+      video.muted = nextMuted;
+      video.defaultMuted = nextMuted;
+      video.volume = nextMuted ? 0 : 1;
+      if (!nextMuted) {
+        video.play().catch(console.warn);
+      }
+      setIsAudioMuted(nextMuted);
+    } else {
+      setIsAudioMuted((prev) => !prev);
     }
   }, []);
 
   const handleManualPlay = useCallback(() => {
     const video = remoteVideoRef.current;
     if (video) {
-      video.muted = true;
-      video.defaultMuted = true;
+      // User tapped: we have user gesture, so try unmuted playback!
+      video.muted = false;
+      video.defaultMuted = false;
+      video.volume = 1;
       video.play().then(() => {
-        setIsVideoPlaying(true);
-        setNeedsUserInteraction(false);
-      }).catch((err) => {
-        console.warn('[Viewer] Manual play error:', err);
+        setIsAudioMuted(false);
+        checkVideoFramePlaying(video);
+      }).catch(() => {
+        video.muted = true;
+        setIsAudioMuted(true);
+        video.play().then(() => {
+          checkVideoFramePlaying(video);
+        }).catch(console.warn);
       });
     }
-  }, []);
+    setNeedsUserInteraction(false);
+    // Also re-request fresh stream from broadcaster
+    sendRef.current('request-stream', { role: 'viewer', restart: true });
+    sendRef.current('peer-joined', { role: 'viewer', restart: true });
+  }, [checkVideoFramePlaying]);
 
-  const cameraUrl = `${window.location.origin}/camera?code=${roomCode}`;
+  const cameraUrl = `${window.location.origin}/?role=camera&code=${roomCode}`;
   const isVideoLive = status === 'connected' || hasVideoTrack;
 
   return (
-    <div ref={containerRef} className="min-h-screen bg-[#080c14] flex flex-col relative select-none">
+    <div
+      ref={containerRef}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      onDoubleClick={isFullscreen ? toggleFullscreen : undefined}
+      className="min-h-screen bg-[#0a0a0a] flex flex-col relative select-none overflow-hidden touch-none"
+    >
       {/* ── Remote Fullscreen Video (Universal Mobile & Desktop Support) ── */}
       <video
         ref={remoteVideoRef}
         autoPlay
         playsInline
         muted
+        onLoadedData={(e) => checkVideoFramePlaying(e.currentTarget)}
         onLoadedMetadata={(e) => {
           e.currentTarget.play().catch(() => setNeedsUserInteraction(true));
+          checkVideoFramePlaying(e.currentTarget);
         }}
         onCanPlay={(e) => {
           e.currentTarget.play().catch(() => setNeedsUserInteraction(true));
+          checkVideoFramePlaying(e.currentTarget);
         }}
-        onPlaying={() => {
-          setIsVideoPlaying(true);
-          setNeedsUserInteraction(false);
-        }}
-        onPause={() => {
-          if (isVideoLive) {
-            setIsVideoPlaying(false);
-          }
-        }}
+        onPlaying={(e) => checkVideoFramePlaying(e.currentTarget)}
+        onTimeUpdate={(e) => checkVideoFramePlaying(e.currentTarget)}
+        onResize={(e) => checkVideoFramePlaying(e.currentTarget)}
         style={{
           transform: `rotate(${videoTransform.rotation}deg) scaleX(${videoTransform.mirrorX ? -1 : 1}) scaleY(${videoTransform.mirrorY ? -1 : 1}) scale(${videoTransform.zoom || 1})`,
-          transition: 'transform 0.2s ease-out',
+          transition: 'transform 0.1s ease-out',
+          transformOrigin: 'center center',
         }}
         className={`fixed inset-0 w-full h-full object-contain bg-black transition-opacity duration-300 ${
           isVideoLive ? 'opacity-100 z-10' : 'opacity-0 pointer-events-none'
@@ -383,16 +545,16 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
       {isVideoLive && (!isVideoPlaying || needsUserInteraction) && (
         <div
           onClick={handleManualPlay}
-          className="fixed inset-0 z-30 flex flex-col items-center justify-center bg-black/85 backdrop-blur-md p-6 text-center cursor-pointer select-none transition-all"
+          className="fixed inset-0 z-30 flex flex-col items-center justify-center bg-black/90 backdrop-blur-md p-6 text-center cursor-pointer select-none transition-all"
         >
-          <div className="w-16 h-16 rounded-3xl bg-brand-500/20 border border-brand-500/30 flex items-center justify-center mb-4">
-            <Loader2 className="w-8 h-8 text-brand-400 animate-spin" />
+          <div className="w-14 h-14 rounded-2xl bg-neutral-900 border border-neutral-800 flex items-center justify-center mb-4">
+            <Loader2 className="w-7 h-7 text-white animate-spin" />
           </div>
           <h3 className="text-xl font-bold text-white mb-2">
             Connecting Video Feed…
           </h3>
-          <p className="text-slate-400 text-sm max-w-sm mb-6 leading-relaxed">
-            Negotiating secure stream. If video doesn't play automatically, tap below.
+          <p className="text-neutral-400 text-sm max-w-sm mb-6 leading-relaxed">
+            Connected to phone camera. Tap below if video doesn't appear immediately.
           </p>
           <button
             type="button"
@@ -400,95 +562,132 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
               e.stopPropagation();
               handleManualPlay();
             }}
-            className="flex items-center gap-2.5 px-6 py-3.5 rounded-2xl bg-brand-500 hover:bg-brand-600 active:scale-95 text-white font-bold text-sm shadow-xl shadow-brand-500/30 transition-all"
+            className="flex items-center gap-2 px-6 py-3.5 rounded-xl bg-white hover:bg-neutral-200 active:scale-98 text-black font-semibold text-sm transition shadow-sm"
           >
-            <Play className="w-5 h-5 fill-current" />
-            <span>Tap to Show Live Video</span>
+            <Play className="w-4 h-4 fill-current" />
+            <span>Tap to Display Live Video</span>
           </button>
         </div>
       )}
 
-      {/* ── Top Bar ── */}
-      <header className="relative z-20 flex items-center justify-between px-6 sm:px-8 py-4 sm:py-5 gap-3">
-        <div className="flex items-center gap-2">
-          {onExit && (
-            <button
-              onClick={onExit}
-              title="Return to mode selection"
-              className="flex items-center gap-1.5 px-3 sm:px-4 py-3 rounded-2xl bg-white/10 hover:bg-white/20 active:scale-95 backdrop-blur-md border border-white/15 text-white/80 hover:text-white text-xs sm:text-sm font-semibold transition shadow-lg"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              <span className="hidden sm:inline">Modes</span>
-            </button>
-          )}
-
-          <div className="flex items-center gap-2.5 sm:gap-3 px-4 sm:px-6 py-3 rounded-2xl bg-white/12 backdrop-blur-md border border-white/20 text-white font-bold text-sm sm:text-lg shadow-lg">
-            <Monitor className="w-5 h-5 text-brand-400" />
-            <span>Projector Display</span>
-            {isVideoLive && (
-              <span className="flex items-center gap-1.5 text-xs font-mono text-green-400 bg-green-500/20 px-2.5 py-0.5 rounded-full border border-green-500/30">
-                <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-                LIVE
-              </span>
-            )}
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 sm:gap-3">
+      {/* ── Subtle Floating Fullscreen Controls (Hover to show, zero obstruction) ── */}
+      {isFullscreen && isVideoLive && (
+        <div className="fixed top-4 right-4 z-40 flex items-center gap-2 opacity-0 hover:opacity-100 transition-opacity duration-300">
           <button
-            onClick={handleGenerateNewCode}
-            title="Generate new pairing code"
-            className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-white/10 hover:bg-white/20 active:scale-95 backdrop-blur-md border border-white/15 text-white/90 text-sm font-semibold transition shadow-lg"
+            onClick={toggleAudioMute}
+            title={isAudioMuted ? 'Unmute Audio' : 'Mute Audio'}
+            className="p-3 rounded-xl bg-black/75 hover:bg-black/90 text-white backdrop-blur-md border border-white/20 transition-all active:scale-95"
           >
-            <RefreshCw className="w-4 h-4" />
-            <span className="hidden sm:inline">New Code</span>
+            {isAudioMuted ? (
+              <VolumeX className="w-5 h-5 text-neutral-400" />
+            ) : (
+              <Volume2 className="w-5 h-5 text-white" />
+            )}
           </button>
-
           <button
             onClick={toggleFullscreen}
-            title="Toggle fullscreen"
-            className="flex items-center gap-2.5 px-5 sm:px-6 py-3 rounded-2xl bg-white/12 hover:bg-white/20 active:scale-95 backdrop-blur-md border border-white/20 text-white font-semibold text-base transition-all shadow-lg"
+            title="Exit Fullscreen (ESC or Double-Click anywhere)"
+            className="p-3 rounded-xl bg-black/75 hover:bg-black/90 text-white backdrop-blur-md border border-white/20 transition-all active:scale-95"
           >
-            <Maximize2 className="w-5 h-5" />
-            <span>Fullscreen</span>
+            <Minimize2 className="w-5 h-5" />
           </button>
         </div>
-      </header>
+      )}
+
+      {/* ── Top Bar (Completely hidden in Fullscreen when live video is playing for 100% clean display) ── */}
+      {(!isFullscreen || !isVideoLive) && (
+        <header className="relative z-20 flex items-center justify-between px-6 sm:px-8 py-4 sm:py-5 gap-3 transition-opacity duration-300">
+          <div className="flex items-center gap-2">
+            {onExit && (
+              <button
+                onClick={onExit}
+                title="Return to mode selection"
+                className="flex items-center gap-1.5 px-3 sm:px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 active:scale-95 backdrop-blur-md border border-white/10 text-white/80 hover:text-white text-xs sm:text-sm font-medium transition"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                <span className="hidden sm:inline">Modes</span>
+              </button>
+            )}
+
+            <div className="flex items-center gap-2.5 sm:gap-3 px-4 sm:px-5 py-2.5 rounded-xl bg-white/10 backdrop-blur-md border border-white/10 text-white font-semibold text-sm sm:text-base">
+              <Monitor className="w-4 h-4 text-white" />
+              <span>Projector Display</span>
+              {isVideoLive && (
+                <span className="flex items-center gap-1.5 text-xs font-mono text-white bg-white/10 px-2 py-0.5 rounded-md border border-white/10">
+                  <span className="w-2 h-2 rounded-full bg-red-500" />
+                  LIVE
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 sm:gap-3">
+            {/* Speaker Audio Mute / Unmute Toggle */}
+            {isVideoLive && (
+              <button
+                type="button"
+                onClick={toggleAudioMute}
+                title={isAudioMuted ? 'Audio Muted (Click to Hear Phone Audio)' : 'Audio Live (Click to Mute)'}
+                className="flex items-center gap-2 px-3 sm:px-4 py-2.5 rounded-xl backdrop-blur-md border border-white/10 bg-white/10 hover:bg-white/15 text-white text-xs sm:text-sm font-medium transition active:scale-95"
+              >
+                {isAudioMuted ? <VolumeX className="w-4 h-4 text-neutral-400" /> : <Volume2 className="w-4 h-4 text-white" />}
+                <span className="hidden sm:inline">{isAudioMuted ? 'Unmute Audio' : 'Audio Live'}</span>
+              </button>
+            )}
+
+            <button
+              onClick={handleGenerateNewCode}
+              title="Generate new pairing code"
+              className="flex items-center gap-2 px-3.5 sm:px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 active:scale-95 backdrop-blur-md border border-white/10 text-white text-xs sm:text-sm font-medium transition"
+            >
+              <RefreshCw className="w-4 h-4" />
+              <span className="hidden sm:inline">New Code</span>
+            </button>
+
+            <button
+              onClick={toggleFullscreen}
+              title="Toggle fullscreen"
+              className="flex items-center gap-2 px-4 sm:px-5 py-2.5 rounded-xl bg-white hover:bg-neutral-200 active:scale-95 text-black font-semibold text-xs sm:text-sm transition shadow-sm"
+            >
+              <Maximize2 className="w-4 h-4" />
+              <span>Fullscreen</span>
+            </button>
+          </div>
+        </header>
+      )}
 
       {/* ── Waiting Screen (Pairing Card & QR Code) ── */}
       {!isVideoLive && (
         <div className="flex-1 flex flex-col items-center justify-center p-6 relative z-10">
-          <div className="w-full max-w-lg bg-surface-800/90 backdrop-blur-xl border border-surface-700 rounded-3xl p-8 shadow-2xl flex flex-col items-center gap-7">
+          <div className="w-full max-w-lg bg-[#141414] border border-neutral-800 rounded-3xl p-7 sm:p-8 shadow-xl flex flex-col items-center gap-6">
             {/* Phone paired indicator banner */}
             {isPhonePaired ? (
-              <div className="w-full flex items-center justify-center gap-3 px-5 py-3 rounded-2xl bg-green-500/20 border border-green-500/40 text-green-300 shadow-lg shadow-green-500/10">
-                <ShieldCheck className="w-5 h-5 text-green-400 animate-pulse" />
-                <span className="font-bold text-sm sm:text-base">
-                  Phone connected! Waiting for broadcast to start…
-                </span>
+              <div className="w-full flex items-center justify-center gap-2.5 px-4 py-3 rounded-xl bg-neutral-900 border border-neutral-700 text-white font-medium text-sm">
+                <ShieldCheck className="w-4 h-4 text-white" />
+                <span>Phone connected! Waiting for broadcast to start…</span>
               </div>
             ) : (
               <div className="text-center">
-                <h2 className="text-2xl sm:text-3xl font-extrabold text-white mb-2">
+                <h2 className="text-2xl sm:text-3xl font-bold text-white mb-1.5">
                   Connect Phone Camera
                 </h2>
-                <p className="text-slate-400 text-sm sm:text-base leading-relaxed">
-                  Scan QR code or visit on your phone and enter the pairing code
+                <p className="text-neutral-400 text-sm leading-relaxed">
+                  Scan QR code or open URL on your phone and enter pairing code
                 </p>
               </div>
             )}
 
             {/* 6-Digit Pairing Code Display */}
             <div className="flex flex-col items-center gap-2 w-full">
-              <span className="text-xs font-bold uppercase tracking-widest text-slate-400">
+              <span className="text-xs font-semibold uppercase tracking-wider text-neutral-400">
                 Pairing Code (Click to Copy)
               </span>
               <div
                 onClick={copyCode}
                 title="Click to copy code"
-                className="flex items-center justify-center gap-3 bg-surface-900 hover:bg-surface-800 border-2 border-surface-700 hover:border-brand-500 rounded-2xl px-6 py-4 w-full cursor-pointer transition-all group shadow-inner"
+                className="flex items-center justify-center gap-3 bg-neutral-900 hover:bg-neutral-850 border border-neutral-800 hover:border-neutral-700 rounded-2xl px-6 py-4 w-full cursor-pointer transition group"
               >
-                <span className="text-4xl sm:text-5xl font-mono font-black text-brand-400 tracking-[0.3em] select-all">
+                <span className="text-4xl sm:text-5xl font-mono font-bold text-white tracking-[0.25em] select-all">
                   {roomCode}
                 </span>
                 <button
@@ -498,39 +697,39 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
                     copyCode();
                   }}
                   title="Copy code"
-                  className="p-2.5 rounded-xl bg-surface-700/80 group-hover:bg-brand-500 text-slate-300 group-hover:text-white transition active:scale-95"
+                  className="p-2.5 rounded-xl bg-neutral-800 group-hover:bg-white group-hover:text-black text-neutral-300 transition active:scale-95"
                 >
                   {copied ? (
-                    <Check className="w-5 h-5 text-green-400 group-hover:text-white" />
+                    <Check className="w-4 h-4 text-white group-hover:text-black" />
                   ) : (
-                    <Copy className="w-5 h-5" />
+                    <Copy className="w-4 h-4" />
                   )}
                 </button>
               </div>
               {copied && (
-                <span className="text-xs font-bold text-green-400 animate-in fade-in">
+                <span className="text-xs font-medium text-white">
                   Code copied to clipboard!
                 </span>
               )}
             </div>
 
             {/* QR Code */}
-            <div className="p-4 bg-white rounded-2xl shadow-xl flex items-center justify-center">
+            <div className="p-4 bg-white rounded-2xl shadow-md flex items-center justify-center">
               <QRCodeSVG
                 value={cameraUrl}
-                size={200}
+                size={190}
                 level="M"
                 includeMargin={false}
               />
             </div>
 
             {/* Connection Link */}
-            <p className="text-slate-400 text-xs font-mono text-center break-all px-4">
-              Direct Link: <a href={cameraUrl} className="text-brand-400 underline">{cameraUrl}</a>
+            <p className="text-neutral-400 text-xs font-mono text-center break-all px-4">
+              Direct Link: <a href={cameraUrl} className="text-white underline">{cameraUrl}</a>
             </p>
 
-            <div className="flex items-center gap-2 text-xs text-slate-400">
-              <span className="w-2 h-2 rounded-full bg-brand-400 animate-ping" />
+            <div className="flex items-center gap-2 text-xs text-neutral-400">
+              <span className="w-1.5 h-1.5 rounded-full bg-neutral-500" />
               <span>
                 {isPhonePaired ? 'Starting camera broadcast…' : 'Waiting for phone connection…'}
               </span>

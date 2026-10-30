@@ -40,7 +40,23 @@ export function useCamera({ enabled, quality }: UseCameraOptions) {
     frameRate?: number;
   } | null>(null);
   const [cameraError, setCameraError] = useState('');
+  const [isMicMuted, setIsMicMuted] = useState(false);
+  const isMicMutedRef = useRef(false);
+  isMicMutedRef.current = isMicMuted;
   const streamRef = useRef<MediaStream | null>(null);
+
+  const toggleMic = useCallback((forceMuted?: boolean) => {
+    setIsMicMuted((prev) => {
+      const nextMuted = typeof forceMuted === 'boolean' ? forceMuted : !prev;
+      isMicMutedRef.current = nextMuted;
+      if (streamRef.current) {
+        streamRef.current.getAudioTracks().forEach((track) => {
+          track.enabled = !nextMuted;
+        });
+      }
+      return nextMuted;
+    });
+  }, []);
 
   const stopStream = useCallback(() => {
     if (streamRef.current) {
@@ -99,15 +115,34 @@ export function useCamera({ enabled, quality }: UseCameraOptions) {
       videoConstraints.facingMode = { ideal: facingMode };
     }
 
-    const constraints: MediaStreamConstraints = {
-      audio: false,
-      video: videoConstraints,
+    const audioConstraints: MediaTrackConstraints = {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
     };
 
-    navigator.mediaDevices
-      .getUserMedia(constraints)
+    const getMedia = async () => {
+      try {
+        return await navigator.mediaDevices.getUserMedia({
+          video: videoConstraints,
+          audio: audioConstraints,
+        });
+      } catch (err) {
+        console.warn('[useCamera] Audio+Video getUserMedia failed, falling back to video only:', err);
+        return await navigator.mediaDevices.getUserMedia({
+          video: videoConstraints,
+          audio: false,
+        });
+      }
+    };
+
+    getMedia()
       .then(async (s) => {
         stopStream();
+        // Apply current mic mute status to audio tracks
+        s.getAudioTracks().forEach((track) => {
+          track.enabled = !isMicMutedRef.current;
+        });
         streamRef.current = s;
         setStream(s);
         setCameraError('');
@@ -129,15 +164,17 @@ export function useCamera({ enabled, quality }: UseCameraOptions) {
           setActiveDeviceId(activeSettings.deviceId);
         }
 
-        // Detect active facing mode
+        // Detect active facing mode without re-triggering getUserMedia
         if (activeSettings?.facingMode === 'user' || activeSettings?.facingMode === 'environment') {
-          setFacingMode(activeSettings.facingMode as FacingMode);
+          if (activeSettings.facingMode !== facingMode) {
+            setFacingMode(activeSettings.facingMode as FacingMode);
+          }
         } else if (activeSettings?.deviceId) {
           const currentDev = vDevices.find((d) => d.deviceId === activeSettings.deviceId);
           if (currentDev) {
-            if (isFrontDevice(currentDev)) {
+            if (isFrontDevice(currentDev) && facingMode !== 'user') {
               setFacingMode('user');
-            } else if (isBackDevice(currentDev)) {
+            } else if (isBackDevice(currentDev) && facingMode !== 'environment') {
               setFacingMode('environment');
             }
           }
@@ -226,8 +263,12 @@ export function useCamera({ enabled, quality }: UseCameraOptions) {
     try {
       const caps = track.getCapabilities?.() as any;
       if (caps && 'zoom' in caps) {
+        const min = typeof caps.zoom.min === 'number' ? caps.zoom.min : 1;
+        const max = typeof caps.zoom.max === 'number' ? caps.zoom.max : 5;
+        // Map zoom value (1 to 5) to camera's physical min and max
+        const target = min + ((zoomValue - 1) / 4) * (max - min);
         await track.applyConstraints({
-          advanced: [{ zoom: zoomValue } as any],
+          advanced: [{ zoom: Math.min(max, Math.max(min, target)) } as any],
         });
         return true;
       }
@@ -254,5 +295,8 @@ export function useCamera({ enabled, quality }: UseCameraOptions) {
     applyHardwareZoom,
     cameraError,
     currentResolution,
+    isMicMuted,
+    toggleMic,
+    hasAudioTrack: stream ? stream.getAudioTracks().length > 0 : false,
   };
 }

@@ -12,6 +12,8 @@ import {
   Minus,
   X,
   Check,
+  Mic,
+  MicOff,
 } from 'lucide-react';
 import type { VideoTransform } from '../types';
 
@@ -30,6 +32,8 @@ interface ControlsProps {
   onTransformChange: (newTransform: VideoTransform) => void;
   facingMode: 'user' | 'environment';
   onSwitchCamera: () => void;
+  isMicMuted?: boolean;
+  onToggleMic?: () => void;
   isTorchSupported: boolean;
   isTorchOn: boolean;
   onToggleTorch: () => void;
@@ -45,6 +49,8 @@ export default function Controls({
   onTransformChange,
   facingMode,
   onSwitchCamera,
+  isMicMuted = false,
+  onToggleMic,
   isTorchSupported,
   isTorchOn,
   quality,
@@ -98,9 +104,9 @@ export default function Controls({
             type="button"
             onClick={onToggleTorch}
             title={isTorchOn ? 'Flashlight On' : 'Flashlight Off'}
-            className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center transition-all backdrop-blur-xl shadow-lg active:scale-90 ${
+            className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center transition-all backdrop-blur-md active:scale-90 ${
               isTorchOn
-                ? 'bg-amber-400 text-slate-950 shadow-amber-400/40 ring-2 ring-amber-300'
+                ? 'bg-white text-black font-bold shadow-md'
                 : 'bg-black/60 border border-white/15 text-white/90 hover:bg-black/80'
             }`}
           >
@@ -115,7 +121,7 @@ export default function Controls({
           title="Rotate Video 90°"
           className={`h-9 sm:h-10 px-2.5 sm:px-3 rounded-full flex items-center gap-1 transition-all backdrop-blur-xl shadow-lg active:scale-90 ${
             videoTransform.rotation !== 0
-              ? 'bg-brand-500 text-white font-bold text-xs ring-2 ring-brand-400'
+              ? 'bg-white text-black font-bold text-xs shadow-md'
               : 'bg-black/60 border border-white/15 text-white/90 hover:bg-black/80 text-xs font-semibold'
           }`}
         >
@@ -130,7 +136,7 @@ export default function Controls({
           title="Mirror Video"
           className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center transition-all backdrop-blur-xl shadow-lg active:scale-90 ${
             videoTransform.mirrorX
-              ? 'bg-brand-500 text-white ring-2 ring-brand-400'
+              ? 'bg-white text-black font-bold shadow-md'
               : 'bg-black/60 border border-white/15 text-white/90 hover:bg-black/80'
           }`}
         >
@@ -176,7 +182,7 @@ export default function Controls({
               step="0.1"
               value={videoTransform.zoom || 1}
               onChange={(e) => handleSetZoom(parseFloat(e.target.value))}
-              className="w-32 accent-brand-500 h-2 bg-surface-700 rounded-lg cursor-pointer"
+              className="w-32 accent-white h-2 bg-white/20 rounded-lg cursor-pointer"
             />
             <button
               type="button"
@@ -186,7 +192,7 @@ export default function Controls({
             >
               <Plus className="w-4 h-4" />
             </button>
-            <span className="font-mono font-black text-brand-400 text-xs w-9 text-right">
+            <span className="font-mono font-bold text-white text-xs w-9 text-right">
               {(videoTransform.zoom || 1).toFixed(1)}x
             </span>
           </div>
@@ -203,7 +209,7 @@ export default function Controls({
                 onClick={() => handleSetZoom(z)}
                 className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full font-bold text-xs sm:text-sm flex items-center justify-center transition-all active:scale-95 ${
                   isExact
-                    ? 'bg-brand-500 text-white shadow-lg shadow-brand-500/50 scale-105'
+                    ? 'bg-white text-black font-extrabold shadow-lg scale-105'
                     : 'text-slate-300 hover:text-white hover:bg-white/10'
                 }`}
               >
@@ -228,28 +234,41 @@ export default function Controls({
       </div>
 
       {/* ── Bottom Deck Controls ── */}
-      <div className="fixed bottom-0 inset-x-0 z-20 pb-6 pt-3 px-6 pointer-events-auto flex items-center justify-between max-w-sm sm:max-w-md mx-auto select-none">
-        {/* Switch Camera */}
+      <div className="fixed bottom-0 inset-x-0 z-20 pb-6 pt-3 px-4 sm:px-6 pointer-events-auto flex items-center justify-between gap-2 max-w-sm sm:max-w-md mx-auto select-none">
+        {/* Switch Camera (Rotation/Flip icon only, no text) */}
         <button
           type="button"
           onClick={onSwitchCamera}
-          className="flex flex-col items-center justify-center gap-1 w-14 h-14 rounded-full bg-black/75 hover:bg-black/90 active:scale-90 backdrop-blur-xl border border-white/20 text-white shadow-2xl transition-all"
-          title="Switch Camera (Front / Back)"
+          className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-black/75 hover:bg-black/90 active:scale-90 backdrop-blur-xl border border-white/20 text-white shadow-2xl flex items-center justify-center transition-all shrink-0"
+          title={`Switch Camera (Currently: ${facingMode === 'user' ? 'Front' : 'Back'})`}
         >
-          <SwitchCamera className="w-5 h-5 text-brand-400" />
-          <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-300">
-            {facingMode === 'user' ? 'Front' : 'Back'}
-          </span>
+          <SwitchCamera className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
         </button>
+
+        {/* Microphone Mute / Unmute Button (Clean monochrome: cross slash when muted, mic when unmuted) */}
+        {onToggleMic && (
+          <button
+            type="button"
+            onClick={() => onToggleMic()}
+            className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-black/75 hover:bg-black/90 active:scale-90 backdrop-blur-xl border border-white/20 text-white shadow-2xl flex items-center justify-center transition-all shrink-0"
+            title={isMicMuted ? 'Microphone Muted (Tap to Unmute)' : 'Microphone Live (Tap to Mute)'}
+          >
+            {isMicMuted ? (
+              <MicOff className="w-5 h-5 sm:w-6 sm:h-6 text-white/40" />
+            ) : (
+              <Mic className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
+            )}
+          </button>
+        )}
 
         {/* End Live Broadcast */}
         <button
           type="button"
           onClick={onEndLive}
-          className="flex items-center gap-2.5 px-6 sm:px-7 py-3.5 sm:py-4 rounded-full bg-red-600 hover:bg-red-500 active:scale-95 text-white font-extrabold text-sm sm:text-base shadow-2xl shadow-red-600/40 backdrop-blur-xl border border-red-400/40 transition-all"
+          className="flex-1 flex items-center justify-center gap-2 px-4 sm:px-6 py-3.5 sm:py-4 rounded-full bg-red-600 hover:bg-red-700 active:scale-95 text-white font-bold text-xs sm:text-sm transition-all"
           title="End Live Stream"
         >
-          <Square className="w-4 h-4 fill-current" />
+          <Square className="w-4 h-4 fill-current shrink-0" />
           <span>End Live</span>
         </button>
 
@@ -257,55 +276,52 @@ export default function Controls({
         <button
           type="button"
           onClick={() => setIsSettingsOpen(true)}
-          className="flex flex-col items-center justify-center gap-1 w-14 h-14 rounded-full bg-black/75 hover:bg-black/90 active:scale-90 backdrop-blur-xl border border-white/20 text-white shadow-2xl transition-all"
+          className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-black/75 hover:bg-black/90 active:scale-90 backdrop-blur-xl border border-white/20 text-white shadow-2xl flex items-center justify-center transition-all shrink-0"
           title="More Options"
         >
-          <Sliders className="w-5 h-5 text-slate-200" />
-          <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-300">
-            More
-          </span>
+          <Sliders className="w-5 h-5 sm:w-6 sm:h-6 text-slate-200" />
         </button>
       </div>
 
-      {/* ── More Options Modal Sheet ── */}
+      {/* ── More Options Modal Sheet (Clean Monochrome Dark UI) ── */}
       {isSettingsOpen && (
-        <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/75 backdrop-blur-sm animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
           <div className="flex-1" onClick={() => setIsSettingsOpen(false)} />
 
-          <div className="w-full max-w-lg mx-auto bg-surface-900/98 backdrop-blur-2xl border-t border-surface-700/80 rounded-t-[32px] p-6 shadow-2xl flex flex-col gap-4 text-white max-h-[85vh] overflow-y-auto animate-in slide-in-from-bottom duration-300">
-            <div className="w-12 h-1.5 bg-surface-600/80 rounded-full mx-auto -mt-2 mb-1 shrink-0" />
+          <div className="w-full max-w-lg mx-auto bg-neutral-900 border-t border-white/10 rounded-t-[28px] p-6 shadow-2xl flex flex-col gap-4 text-white max-h-[85vh] overflow-y-auto animate-in slide-in-from-bottom duration-300">
+            <div className="w-12 h-1.5 bg-white/20 rounded-full mx-auto -mt-2 mb-1 shrink-0" />
 
-            <div className="flex items-center justify-between pb-3 border-b border-surface-800">
+            <div className="flex items-center justify-between pb-3 border-b border-white/10">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-brand-500/20 flex items-center justify-center shrink-0">
-                  <Sliders className="w-5 h-5 text-brand-400" />
+                <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center shrink-0">
+                  <Sliders className="w-5 h-5 text-white" />
                 </div>
                 <div>
-                  <h3 className="text-xl font-bold text-white">More Options</h3>
-                  <p className="text-xs text-slate-400">Stream quality, rotation & screen flip</p>
+                  <h3 className="text-lg font-bold text-white tracking-tight">More Options</h3>
+                  <p className="text-xs text-white/50">Stream quality, rotation & screen flip</p>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => setIsSettingsOpen(false)}
-                className="p-2.5 rounded-full bg-surface-800 hover:bg-surface-700 text-slate-300 hover:text-white transition-all active:scale-95"
+                className="p-2 rounded-full bg-white/5 hover:bg-white/10 text-white/70 hover:text-white transition-all active:scale-95"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             {/* Rotation & Flip */}
-            <div className="flex flex-col gap-3.5 p-4 sm:p-5 rounded-2xl bg-surface-800/80 border border-surface-700/60">
+            <div className="flex flex-col gap-3.5 p-4 rounded-2xl bg-white/[0.03] border border-white/10">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <RotateCw className="w-4 h-4 text-brand-400" />
-                  <span className="text-sm font-bold text-white uppercase tracking-wider">Rotation & Flip</span>
+                  <RotateCw className="w-4 h-4 text-white/70" />
+                  <span className="text-xs font-semibold text-white/80 uppercase tracking-wider">Rotation & Flip</span>
                 </div>
                 {(videoTransform.rotation !== 0 || videoTransform.mirrorX || videoTransform.mirrorY) && (
                   <button
                     type="button"
                     onClick={handleResetTransform}
-                    className="text-xs text-brand-400 hover:text-brand-300 font-bold bg-brand-500/10 px-2.5 py-1 rounded-lg transition"
+                    className="text-xs text-white/70 hover:text-white font-medium bg-white/10 px-2.5 py-1 rounded-lg transition"
                   >
                     Reset Normal
                   </button>
@@ -313,22 +329,25 @@ export default function Controls({
               </div>
 
               <div>
-                <span className="text-xs text-slate-400 block mb-2">Rotate View:</span>
+                <span className="text-xs text-white/50 block mb-2">Rotate View:</span>
                 <div className="grid grid-cols-4 gap-2">
-                  {[0, 90, 180, 270].map((deg) => (
-                    <button
-                      key={deg}
-                      type="button"
-                      onClick={() => handleRotate(deg)}
-                      className={`py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all active:scale-95 ${
-                        videoTransform.rotation === deg
-                          ? 'bg-brand-500 text-white shadow-md shadow-brand-500/30 ring-1 ring-brand-400'
-                          : 'bg-surface-700 text-slate-300 hover:bg-surface-650 hover:text-white'
-                      }`}
-                    >
-                      {deg}°
-                    </button>
-                  ))}
+                  {[0, 90, 180, 270].map((deg) => {
+                    const isSelected = videoTransform.rotation === deg;
+                    return (
+                      <button
+                        key={deg}
+                        type="button"
+                        onClick={() => handleRotate(deg)}
+                        className={`py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition-all active:scale-95 ${
+                          isSelected
+                            ? 'bg-white text-black shadow-md font-bold'
+                            : 'bg-white/5 text-white/70 hover:bg-white/10 hover:text-white'
+                        }`}
+                      >
+                        {deg}°
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -336,44 +355,44 @@ export default function Controls({
                 <button
                   type="button"
                   onClick={handleToggleMirrorX}
-                  className={`flex items-center justify-center gap-2 py-3 px-3 rounded-xl text-xs sm:text-sm font-bold transition-all active:scale-95 ${
+                  className={`flex items-center justify-center gap-2 py-3 px-3 rounded-xl text-xs sm:text-sm font-medium transition-all active:scale-95 ${
                     videoTransform.mirrorX
-                      ? 'bg-brand-500 text-white shadow-md shadow-brand-500/30'
-                      : 'bg-surface-700 text-slate-300 hover:bg-surface-650 hover:text-white'
+                      ? 'bg-white text-black font-bold shadow-md'
+                      : 'bg-white/5 text-white/70 hover:bg-white/10 hover:text-white'
                   }`}
                 >
                   <FlipHorizontal className="w-4 h-4" />
                   <span>Mirror (H)</span>
                   {videoTransform.mirrorX && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-white/25 text-white font-black">ON</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-black/20 text-black font-extrabold">ON</span>
                   )}
                 </button>
 
                 <button
                   type="button"
                   onClick={handleToggleMirrorY}
-                  className={`flex items-center justify-center gap-2 py-3 px-3 rounded-xl text-xs sm:text-sm font-bold transition-all active:scale-95 ${
+                  className={`flex items-center justify-center gap-2 py-3 px-3 rounded-xl text-xs sm:text-sm font-medium transition-all active:scale-95 ${
                     videoTransform.mirrorY
-                      ? 'bg-brand-500 text-white shadow-md shadow-brand-500/30'
-                      : 'bg-surface-700 text-slate-300 hover:bg-surface-650 hover:text-white'
+                      ? 'bg-white text-black font-bold shadow-md'
+                      : 'bg-white/5 text-white/70 hover:bg-white/10 hover:text-white'
                   }`}
                 >
                   <FlipVertical className="w-4 h-4" />
                   <span>Flip (V)</span>
                   {videoTransform.mirrorY && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-white/25 text-white font-black">ON</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-black/20 text-black font-extrabold">ON</span>
                   )}
                 </button>
               </div>
             </div>
 
             {/* Stream Quality */}
-            <div className="flex flex-col gap-3 p-4 sm:p-5 rounded-2xl bg-surface-800/80 border border-surface-700/60">
+            <div className="flex flex-col gap-3 p-4 rounded-2xl bg-white/[0.03] border border-white/10">
               <div className="flex items-center justify-between">
-                <span className="text-sm font-bold text-white uppercase tracking-wider">Stream Quality</span>
-                <span className="text-xs text-brand-400 font-mono font-bold">{quality.toUpperCase()}</span>
+                <span className="text-xs font-semibold text-white/80 uppercase tracking-wider">Stream Quality</span>
+                <span className="text-xs text-white/60 font-mono font-medium">{quality.toUpperCase()}</span>
               </div>
-              <div className="grid grid-cols-2 gap-2.5">
+              <div className="grid grid-cols-2 gap-2">
                 {QUALITY_OPTIONS.map((q) => {
                   const isSelected = quality === q.value;
                   return (
@@ -383,12 +402,12 @@ export default function Controls({
                       onClick={() => onQualityChange(q.value)}
                       className={`flex items-center justify-between p-3 rounded-xl text-left transition-all active:scale-95 ${
                         isSelected
-                          ? 'bg-brand-500/20 border-2 border-brand-500 text-white shadow-sm'
-                          : 'bg-surface-700/80 border border-surface-650 text-slate-300 hover:text-white'
+                          ? 'bg-white/15 border border-white/40 text-white font-bold'
+                          : 'bg-white/5 border border-transparent text-white/70 hover:bg-white/10 hover:text-white'
                       }`}
                     >
-                      <p className="font-bold text-xs sm:text-sm">{q.label}</p>
-                      {isSelected && <Check className="w-4 h-4 text-brand-400 stroke-[3]" />}
+                      <p className="text-xs sm:text-sm">{q.label}</p>
+                      {isSelected && <Check className="w-4 h-4 text-white stroke-[2.5]" />}
                     </button>
                   );
                 })}
@@ -396,27 +415,27 @@ export default function Controls({
             </div>
 
             {/* Info */}
-            <div className="p-4 rounded-2xl bg-surface-800/80 border border-surface-700/60 flex flex-col gap-2.5 text-xs">
+            <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 flex flex-col gap-2.5 text-xs">
               <div className="flex items-center justify-between">
-                <span className="text-slate-400">Stream Status:</span>
-                <span className="inline-flex items-center gap-1.5 font-bold text-green-400">
-                  <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+                <span className="text-white/50">Stream Status:</span>
+                <span className="inline-flex items-center gap-1.5 font-medium text-white/90">
+                  <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
                   Broadcasting to Projector
                 </span>
               </div>
               {currentResolution && (
-                <div className="flex items-center justify-between pt-1 border-t border-surface-700/60">
-                  <span className="text-slate-400">Resolution:</span>
-                  <span className="font-mono text-white font-bold">
+                <div className="flex items-center justify-between pt-1 border-t border-white/10">
+                  <span className="text-white/50">Resolution:</span>
+                  <span className="font-mono text-white/90 font-medium">
                     {currentResolution.width} × {currentResolution.height}
                     {currentResolution.frameRate ? ` @ ${currentResolution.frameRate}fps` : ''}
                   </span>
                 </div>
               )}
               {roomCode && (
-                <div className="flex items-center justify-between pt-1 border-t border-surface-700/60">
-                  <span className="text-slate-400">Projector Code:</span>
-                  <span className="font-mono text-brand-400 font-bold tracking-widest text-sm">
+                <div className="flex items-center justify-between pt-1 border-t border-white/10">
+                  <span className="text-white/50">Projector Code:</span>
+                  <span className="font-mono text-white font-bold tracking-widest text-sm">
                     {roomCode}
                   </span>
                 </div>
@@ -426,7 +445,7 @@ export default function Controls({
             <button
               type="button"
               onClick={() => setIsSettingsOpen(false)}
-              className="w-full py-3.5 rounded-2xl bg-brand-500 hover:bg-brand-600 active:scale-95 text-white font-bold text-base transition shadow-xl shadow-brand-500/25"
+              className="w-full py-3.5 rounded-xl bg-white text-black font-bold text-sm hover:bg-white/90 active:scale-98 transition shadow-lg"
             >
               Done
             </button>

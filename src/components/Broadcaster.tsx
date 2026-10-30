@@ -36,6 +36,8 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
     mirrorY: false,
     zoom: 1,
   });
+  const videoTransformRef = useRef<VideoTransform>(videoTransform);
+  videoTransformRef.current = videoTransform;
 
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -59,6 +61,8 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
     applyHardwareZoom,
     cameraError,
     currentResolution,
+    isMicMuted,
+    toggleMic,
   } = useCamera({ enabled: isCameraEnabled, quality });
 
   const streamRef = useRef<MediaStream | null>(null);
@@ -116,8 +120,12 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
   // Create or refresh RTCPeerConnection
   const createPeerConnection = useCallback((currentStream: MediaStream) => {
     if (pcRef.current) {
-      pcRef.current.close();
+      try {
+        pcRef.current.close();
+      } catch (e) {}
+      pcRef.current = null;
     }
+    iceCandidateQueue.current = [];
 
     console.log('[Broadcaster] Creating new RTCPeerConnection');
     const pc = new RTCPeerConnection(ICE_SERVERS);
@@ -138,24 +146,27 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
       console.log('[Broadcaster] WebRTC connectionState:', pc.connectionState);
     };
 
+    pc.oniceconnectionstatechange = () => {
+      console.log('[Broadcaster] WebRTC iceConnectionState:', pc.iceConnectionState);
+      if (pc.iceConnectionState === 'failed') {
+        console.warn('[Broadcaster] WebRTC ICE failed, attempting automatic restart...');
+        if (streamRef.current && statusRef.current === 'streaming') {
+          createPeerConnection(streamRef.current);
+        }
+      }
+    };
+
     // Add all tracks from the camera stream
     currentStream.getTracks().forEach((track) => {
-      const sender = pc.addTrack(track, currentStream);
-      try {
-        const params = sender.getParameters?.();
-        if (params && params.encodings && params.encodings.length > 0) {
-          params.encodings[0].maxBitrate = 2500000;
-          sender.setParameters?.(params).catch(() => {});
-        }
-      } catch (e) {}
+      pc.addTrack(track, currentStream);
     });
 
     // Send initial offer
     sendOffer(pc);
-    sendRef.current('video-transform', videoTransform);
+    sendRef.current('video-transform', videoTransformRef.current);
 
     return pc;
-  }, [sendOffer, videoTransform]);
+  }, [sendOffer]);
 
   // Signaling message handler
   const handleSignalingMessage = useCallback(
@@ -163,15 +174,24 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
       console.log('[Broadcaster] Received signal:', msg.type);
 
       try {
-        if (msg.type === 'peer-joined') {
-          console.log('[Broadcaster] Viewer is in signaling room');
+        if (msg.type === 'pair-ack') {
+          console.log('[Broadcaster] Received pair-ack from Projector!');
+          if (statusRef.current === 'pairing') {
+            if (pairingTimeoutRef.current) clearTimeout(pairingTimeoutRef.current);
+            setStatus('paired');
+            setError('');
+          }
+        } else if (msg.type === 'peer-joined' || msg.type === 'request-stream') {
+          console.log('[Broadcaster] Viewer requested stream / joined room:', msg.payload);
+          if (statusRef.current === 'pairing') {
+            if (pairingTimeoutRef.current) clearTimeout(pairingTimeoutRef.current);
+            setStatus('paired');
+            setError('');
+          }
           // If we are already streaming and have a stream, send offer now
           if (statusRef.current === 'streaming' && streamRef.current) {
-            if (msg.payload?.restart || !pcRef.current || pcRef.current.signalingState === 'closed') {
-              createPeerConnection(streamRef.current);
-            } else {
-              sendOffer(pcRef.current);
-            }
+            console.log('[Broadcaster] Broadcaster already streaming, creating connection for viewer');
+            createPeerConnection(streamRef.current);
           }
         } else if (msg.type === 'answer') {
           const pc = pcRef.current;
@@ -204,8 +224,8 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
   const { isConnected, send } = useSignaling(activeRoomCode, handleSignalingMessage);
   sendRef.current = send;
 
-  // Handle pairing action
-  const handlePair = () => {
+  // Handle pairing action with room pre-check
+  const handlePair = async () => {
     const cleanCode = code.trim();
     if (cleanCode.length !== 6) {
       setError('Please enter a valid 6-digit code');
@@ -214,32 +234,64 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
     }
     setError('');
     setStatus('pairing');
+
+    // 1. Verify with server that this room is actively open on a projector screen!
+    try {
+      const checkRes = await fetch(`/api/rooms/${cleanCode}/check`);
+      if (checkRes.ok) {
+        const checkData = (await checkRes.json()) as { exists: boolean };
+        if (!checkData.exists) {
+          setStatus('error');
+          setError(`No projector screen found with code ${cleanCode}. Please enter the code currently displayed on your projector screen.`);
+          return;
+        }
+      } else {
+        setStatus('error');
+        setError(`No projector screen found with code ${cleanCode}. Please enter the code currently displayed on your projector screen.`);
+        return;
+      }
+    } catch (e) {
+      console.warn('Room pre-check warning:', e);
+      setStatus('error');
+      setError('Unable to reach server. Please check your internet connection.');
+      return;
+    }
+
+    // 2. Connect to room and initiate pairing handshake
     setActiveRoomCode(cleanCode);
 
     if (pairingTimeoutRef.current) clearTimeout(pairingTimeoutRef.current);
     pairingTimeoutRef.current = window.setTimeout(() => {
       if (statusRef.current === 'pairing') {
         setStatus('error');
-        setError('Connection timed out. Check that the projector screen is open with code ' + cleanCode);
+        setError(`Projector ${cleanCode} did not respond. Make sure the projector screen is open.`);
       }
-    }, 8000);
+    }, 6000);
   };
 
-  // When WebSocket connects to room, mark as paired
+  // Send pair-request as soon as WebSocket connects
   useEffect(() => {
     if (isConnected && activeRoomCode && status === 'pairing') {
-      if (pairingTimeoutRef.current) clearTimeout(pairingTimeoutRef.current);
-      setStatus('paired');
-      send('phone-paired', {});
       send('peer-joined', { role: 'broadcaster' });
+      send('pair-request', { code: activeRoomCode });
     }
   }, [isConnected, activeRoomCode, status, send]);
 
+  // If initial code was provided (e.g. from QR scan), auto-start pairing
+  useEffect(() => {
+    if (initialCode && initialCode.length === 6 && status === 'idle') {
+      handlePair();
+    }
+  }, [initialCode]);
+
   // Start broadcast: transition to 'streaming'
   const handleStartBroadcast = () => {
-    setStatus('streaming');
     statusRef.current = 'streaming';
-    send('phone-paired', {});
+    setStatus('streaming');
+    if (pairingTimeoutRef.current) {
+      clearTimeout(pairingTimeoutRef.current);
+      pairingTimeoutRef.current = null;
+    }
     send('peer-joined', { role: 'broadcaster' });
   };
 
@@ -257,6 +309,11 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
       if (videoSender && newVideoTrack) {
         console.log('[Broadcaster] Replacing video track');
         videoSender.replaceTrack(newVideoTrack).catch(console.warn);
+      }
+      const newAudioTrack = stream.getAudioTracks()[0];
+      const audioSender = senders.find((s) => s.track?.kind === 'audio');
+      if (audioSender && newAudioTrack) {
+        audioSender.replaceTrack(newAudioTrack).catch(console.warn);
       }
     }
   }, [status, stream, createPeerConnection]);
@@ -278,9 +335,26 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
     setStatus('idle');
   };
 
-  // Pinch-to-zoom support
+  // Pinch-to-zoom support (zooms camera/video, not screen)
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const touchStartDistRef = useRef<number | null>(null);
   const touchStartZoomRef = useRef<number>(1);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const preventBrowserPageZoom = (e: TouchEvent) => {
+      if (e.touches.length > 1) {
+        e.preventDefault();
+      }
+    };
+
+    el.addEventListener('touchmove', preventBrowserPageZoom, { passive: false });
+    return () => {
+      el.removeEventListener('touchmove', preventBrowserPageZoom);
+    };
+  }, []);
 
   const handleTouchStart = (e: React.TouchEvent) => {
     if (e.touches.length === 2) {
@@ -313,10 +387,11 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
 
   return (
     <div
+      ref={containerRef}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
-      className="min-h-screen bg-[#080c14] flex flex-col relative overflow-hidden"
+      className="min-h-screen bg-[#0a0a0a] flex flex-col relative overflow-hidden touch-none select-none"
     >
       {/* Live camera video element */}
       <video
@@ -326,7 +401,8 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
         muted
         style={{
           transform: `rotate(${videoTransform.rotation}deg) scaleX(${videoTransform.mirrorX ? -1 : 1}) scaleY(${videoTransform.mirrorY ? -1 : 1}) scale(${videoTransform.zoom || 1})`,
-          transition: 'transform 0.2s ease-out',
+          transition: 'transform 0.1s ease-out',
+          transformOrigin: 'center center',
         }}
         className={`fixed inset-0 w-full h-full object-cover transition-opacity duration-700 ${
           isLive ? 'opacity-100' : 'opacity-0 pointer-events-none'
@@ -340,7 +416,7 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
             <button
               onClick={onExit}
               title="Return to mode selection"
-              className="flex items-center gap-1.5 px-3 py-1.5 sm:py-2 rounded-full bg-white/10 hover:bg-white/20 active:scale-95 backdrop-blur-xl border border-white/15 text-white/80 hover:text-white text-xs sm:text-sm font-semibold transition shadow-lg shrink-0"
+              className="flex items-center gap-1.5 px-3 py-1.5 sm:py-2 rounded-full bg-white/10 hover:bg-white/15 active:scale-95 backdrop-blur-md border border-white/10 text-white/80 hover:text-white text-xs sm:text-sm font-medium transition shrink-0"
             >
               <ArrowLeft className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
               <span>Modes</span>
@@ -348,17 +424,17 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
           )}
 
           <div
-            className={`flex items-center gap-2 px-3.5 sm:px-4 py-1.5 sm:py-2 rounded-full backdrop-blur-xl border font-bold text-xs sm:text-sm transition-all shadow-lg shrink-0 ${
+            className={`flex items-center gap-2 px-3.5 sm:px-4 py-1.5 sm:py-2 rounded-full backdrop-blur-md border font-semibold text-xs sm:text-sm transition-all shrink-0 ${
               isLive
-                ? 'bg-red-500/20 border-red-500/40 text-red-300 shadow-red-500/10'
+                ? 'bg-black/60 border-white/20 text-white'
                 : status === 'paired'
-                ? 'bg-green-500/25 border-green-400/50 text-green-300 shadow-green-500/10'
-                : 'bg-white/10 border-white/15 text-white/70'
+                ? 'bg-black/60 border-white/20 text-white'
+                : 'bg-black/60 border-white/10 text-white/70'
             }`}
           >
             {isLive ? (
               <>
-                <span className="w-2.5 h-2.5 rounded-full bg-red-400 animate-pulse shadow-[0_0_8px_#f87171]" />
+                <span className="w-2 h-2 rounded-full bg-red-500" />
                 <span>LIVE</span>
                 {code && (
                   <>
@@ -369,12 +445,12 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
               </>
             ) : status === 'paired' ? (
               <>
-                <ShieldCheck className="w-4 h-4 text-green-400" />
+                <ShieldCheck className="w-4 h-4 text-white" />
                 <span>Paired</span>
               </>
             ) : (
               <>
-                <Wifi className="w-4 h-4 text-white/60" />
+                <Wifi className="w-4 h-4 text-white/50" />
                 <span>Not Paired</span>
               </>
             )}
@@ -389,6 +465,8 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
             onTransformChange={handleTransformChange}
             facingMode={facingMode}
             onSwitchCamera={switchCamera}
+            isMicMuted={isMicMuted}
+            onToggleMic={toggleMic}
             isTorchSupported={isTorchSupported}
             isTorchOn={isTorchOn}
             onToggleTorch={toggleTorch}
@@ -403,16 +481,16 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
       {/* ── UNPAIRED VIEW: Code input ── */}
       {status === 'idle' || status === 'pairing' || status === 'error' ? (
         <div className="relative z-10 flex-1 flex flex-col items-center justify-center p-6 sm:p-8">
-          <div className="w-full max-w-sm bg-surface-800/90 backdrop-blur-xl border border-surface-700 rounded-3xl p-8 shadow-2xl flex flex-col items-center gap-5 relative">
+          <div className="w-full max-w-sm bg-[#141414] border border-neutral-800 rounded-3xl p-7 shadow-xl flex flex-col items-center gap-5 relative">
             <div className="w-full flex justify-end -mb-1">
               <select
                 value={quality}
                 onChange={(e) => setQuality(e.target.value as Quality)}
                 title="Video Quality"
-                className="px-3.5 py-1.5 rounded-xl bg-surface-900/90 hover:bg-surface-700/80 backdrop-blur-md border border-surface-600 text-slate-200 text-xs sm:text-sm font-semibold outline-none cursor-pointer transition-all shadow-md"
+                className="px-3 py-1.5 rounded-xl bg-neutral-900 border border-neutral-800 text-neutral-300 text-xs font-medium outline-none cursor-pointer transition"
               >
                 {QUALITY_OPTIONS.map((q) => (
-                  <option key={q.value} value={q.value} className="bg-slate-900 text-white">
+                  <option key={q.value} value={q.value} className="bg-neutral-900 text-white">
                     {q.label}
                   </option>
                 ))}
@@ -422,19 +500,19 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
             <img
               src="/camera-icon.png"
               alt="Camera"
-              className="w-16 h-16 object-contain brightness-0 invert"
+              className="w-14 h-14 object-contain brightness-0 invert opacity-90"
             />
 
             <div className="text-center">
-              <h2 className="text-2xl font-bold text-white mb-2">Pair with Projector</h2>
-              <p className="text-slate-400 text-sm leading-relaxed">
+              <h2 className="text-xl font-bold text-white mb-1">Pair with Projector</h2>
+              <p className="text-neutral-400 text-xs sm:text-sm leading-relaxed">
                 Enter the 6-digit code shown on the projector screen
               </p>
             </div>
 
             {status === 'error' && (
-              <div className="w-full flex items-start gap-3 px-4 py-3 bg-red-500/10 border border-red-500/30 rounded-2xl text-red-400 text-sm">
-                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <div className="w-full flex items-start gap-2.5 px-3.5 py-2.5 bg-neutral-900 border border-red-500/40 rounded-xl text-red-300 text-xs">
+                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5 text-red-400" />
                 <span>{error}</span>
               </div>
             )}
@@ -445,19 +523,25 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
               maxLength={6}
               placeholder="000000"
               value={code}
-              onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
+              onChange={(e) => {
+                setCode(e.target.value.replace(/\D/g, ''));
+                if (status === 'error') {
+                  setStatus('idle');
+                  setError('');
+                }
+              }}
               onKeyDown={(e) => e.key === 'Enter' && handlePair()}
-              className="w-full text-center text-4xl font-mono font-bold tracking-[0.4em] bg-surface-900 border-2 border-surface-700 focus:border-brand-500 rounded-2xl px-4 py-4 text-white outline-none transition-all placeholder:text-surface-600 placeholder:tracking-[0.3em]"
+              className="w-full text-center text-3xl sm:text-4xl font-mono font-bold tracking-[0.35em] bg-neutral-900 border border-neutral-700 focus:border-white rounded-2xl px-4 py-3.5 text-white outline-none transition placeholder:text-neutral-600 placeholder:tracking-[0.25em]"
             />
 
             <button
               onClick={handlePair}
               disabled={code.length < 6 || status === 'pairing'}
-              className="w-full flex items-center justify-center gap-2.5 px-6 py-4 rounded-2xl bg-brand-500 hover:bg-brand-600 active:scale-95 disabled:bg-surface-700 disabled:text-slate-500 disabled:cursor-not-allowed text-white font-bold text-lg transition-all duration-200 shadow-xl shadow-brand-500/30"
+              className="w-full flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl bg-white hover:bg-neutral-200 active:scale-98 disabled:bg-neutral-800 disabled:text-neutral-500 disabled:cursor-not-allowed text-black font-semibold text-base transition shadow-sm"
             >
               {status === 'pairing' ? (
                 <>
-                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <Loader2 className="w-4 h-4 animate-spin" />
                   Pairing with Projector…
                 </>
               ) : (
@@ -471,35 +555,35 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
       {/* ── PAIRED VIEW: Confirm and start broadcast ── */}
       {status === 'paired' && (
         <div className="relative z-10 flex-1 flex flex-col items-center justify-center p-6 sm:p-8">
-          <div className="w-full max-w-sm bg-surface-800/90 backdrop-blur-xl border border-surface-700 rounded-3xl p-7 shadow-2xl flex flex-col items-center gap-6 text-center">
+          <div className="w-full max-w-sm bg-[#141414] border border-neutral-800 rounded-3xl p-7 shadow-xl flex flex-col items-center gap-6 text-center">
             <img
               src="/paired-icon.png"
               alt="Phone Paired"
-              className="w-20 h-20 object-contain"
+              className="w-16 h-16 object-contain"
             />
 
             <div>
-              <h2 className="text-2xl font-bold text-white mb-1.5">Paired Successfully!</h2>
-              <p className="text-slate-300 text-sm">
-                Connected to Projector Code:{' '}
-                <strong className="text-brand-400 font-mono tracking-widest text-base">
+              <h2 className="text-xl font-bold text-white mb-1">Paired Successfully</h2>
+              <p className="text-neutral-300 text-sm">
+                Projector Code:{' '}
+                <strong className="text-white font-mono tracking-widest text-base">
                   {code}
                 </strong>
               </p>
-              <p className="text-slate-400 text-xs mt-2">
-                Click below to start live camera streaming
+              <p className="text-neutral-400 text-xs mt-1">
+                Ready to stream camera feed
               </p>
             </div>
 
             {/* Front / Back selection */}
-            <div className="inline-flex p-1 rounded-2xl bg-surface-900 border border-surface-700/80 shadow-inner">
+            <div className="inline-flex p-1 rounded-xl bg-neutral-900 border border-neutral-800">
               <button
                 type="button"
                 onClick={() => setCameraFacing('environment')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-xs sm:text-sm transition-all active:scale-95 ${
+                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg font-semibold text-xs sm:text-sm transition-all active:scale-95 ${
                   facingMode === 'environment'
-                    ? 'bg-brand-500 text-white shadow-md shadow-brand-500/30'
-                    : 'text-slate-400 hover:text-white'
+                    ? 'bg-white text-black font-bold shadow-sm'
+                    : 'text-neutral-400 hover:text-white'
                 }`}
               >
                 <Camera className="w-4 h-4" />
@@ -508,10 +592,10 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
               <button
                 type="button"
                 onClick={() => setCameraFacing('user')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-xs sm:text-sm transition-all active:scale-95 ${
+                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg font-semibold text-xs sm:text-sm transition-all active:scale-95 ${
                   facingMode === 'user'
-                    ? 'bg-brand-500 text-white shadow-md shadow-brand-500/30'
-                    : 'text-slate-400 hover:text-white'
+                    ? 'bg-white text-black font-bold shadow-sm'
+                    : 'text-neutral-400 hover:text-white'
                 }`}
               >
                 <User className="w-4 h-4" />
@@ -519,19 +603,19 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
               </button>
             </div>
 
-            <div className="flex flex-col gap-2.5 w-full">
+            <div className="flex flex-col gap-2 w-full">
               <button
                 onClick={handleStartBroadcast}
-                className="w-full inline-flex items-center justify-center gap-2.5 px-7 py-3.5 rounded-full bg-green-500 hover:bg-green-600 active:scale-95 text-white font-bold text-base transition-all duration-200 shadow-xl shadow-green-500/25"
+                className="w-full inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl bg-white hover:bg-neutral-200 active:scale-98 text-black font-bold text-base transition shadow-sm"
               >
-                <Play className="w-5 h-5 fill-current" />
-                <span>Enable Camera & Start Live</span>
+                <Play className="w-4 h-4 fill-current" />
+                <span>Start Live</span>
               </button>
 
               <button
                 type="button"
                 onClick={handleStopBroadcast}
-                className="w-full py-2 text-xs text-slate-400 hover:text-white transition font-medium"
+                className="w-full py-2 text-xs text-neutral-400 hover:text-white transition font-medium"
               >
                 Disconnect & Enter Different Code
               </button>
@@ -542,13 +626,13 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
 
       {/* ── Camera error alert ── */}
       {isLive && cameraError && (
-        <div className="relative z-10 flex-1 flex flex-col items-center justify-center gap-5 text-center p-8">
-          <div className="w-20 h-20 rounded-3xl bg-red-500/20 border border-red-500/30 flex items-center justify-center">
-            <CameraOff className="w-10 h-10 text-red-400" />
+        <div className="relative z-10 flex-1 flex flex-col items-center justify-center gap-4 text-center p-8">
+          <div className="w-16 h-16 rounded-2xl bg-neutral-900 border border-neutral-800 flex items-center justify-center">
+            <CameraOff className="w-8 h-8 text-neutral-400" />
           </div>
           <div>
-            <h3 className="text-xl font-semibold text-white mb-1">Camera Permission / Error</h3>
-            <p className="text-red-400 text-sm max-w-sm">{cameraError}</p>
+            <h3 className="text-lg font-semibold text-white mb-1">Camera Error</h3>
+            <p className="text-neutral-400 text-sm max-w-sm">{cameraError}</p>
           </div>
         </div>
       )}

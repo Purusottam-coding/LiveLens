@@ -1,6 +1,6 @@
 export const ICE_SERVERS: RTCConfiguration = {
   iceServers: [
-    // Google Public STUN
+    // Fast, verified global Google STUN servers
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
@@ -9,6 +9,12 @@ export const ICE_SERVERS: RTCConfiguration = {
 
     // Cloudflare Public STUN
     { urls: 'stun:stun.cloudflare.com:3478' },
+
+    // Metered Verified STUN
+    { urls: 'stun:stun.metered.ca:80' },
+
+    // Nextcloud Verified STUN (Port 443 helps through restrictive firewalls)
+    { urls: 'stun:stun.nextcloud.com:443' },
   ],
   iceCandidatePoolSize: 10,
 };
