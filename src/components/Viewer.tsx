@@ -532,8 +532,9 @@ const cleanupPeerConnection = useCallback(() => {
         e.touches[0].clientX - e.touches[1].clientX,
         e.touches[0].clientY - e.touches[1].clientY
       );
-      const ratio = currentDist / touchStartDistRef.current;
-      const targetZoom = Math.min(5, Math.max(1, Math.round(touchStartZoomRef.current * ratio * 10) / 10));
+      const rawRatio = currentDist / touchStartDistRef.current;
+      const smoothRatio = 1 + (rawRatio - 1) * 0.45;
+      const targetZoom = Math.min(5, Math.max(1, Math.round(touchStartZoomRef.current * smoothRatio * 10) / 10));
       setVideoTransform((prev) => ({ ...prev, zoom: targetZoom }));
     }
   };
@@ -629,8 +630,8 @@ const cleanupPeerConnection = useCallback(() => {
         onTimeUpdate={(e) => checkVideoFramePlaying(e.currentTarget)}
         onResize={(e) => checkVideoFramePlaying(e.currentTarget)}
         style={{
-          transform: `rotate(${videoTransform.rotation}deg) scaleX(${videoTransform.mirrorX ? -1 : 1}) scaleY(${videoTransform.mirrorY ? -1 : 1})`,
-          transition: 'transform 0.1s ease-out',
+          transform: `rotate(${videoTransform.rotation}deg) scaleX(${videoTransform.mirrorX ? -1 : 1}) scaleY(${videoTransform.mirrorY ? -1 : 1})${!videoTransform.isHardwareZoom && videoTransform.zoom && videoTransform.zoom > 1 ? ` scale(${videoTransform.zoom})` : ''}`,
+          transition: 'transform 0.25s cubic-bezier(0.25, 1, 0.5, 1)',
           transformOrigin: 'center center',
         }}
         className={`fixed inset-0 w-full h-full object-contain bg-black transition-opacity duration-300 ${

@@ -48,6 +48,7 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
   const incomingAudioRef = useRef<HTMLAudioElement | null>(null);
   const [hasIncomingAudio, setHasIncomingAudio] = useState(false);
   const [isIncomingAudioMuted, setIsIncomingAudioMuted] = useState(false);
+  const [isHardwareZoomActive, setIsHardwareZoomActive] = useState(false);
   const statusRef = useRef<Status>(status);
   statusRef.current = status;
   const pairingTimeoutRef = useRef<number | null>(null);
@@ -451,8 +452,8 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
         playsInline
         muted
         style={{
-          transform: `rotate(${videoTransform.rotation}deg) scaleX(${videoTransform.mirrorX ? -1 : 1}) scaleY(${videoTransform.mirrorY ? -1 : 1}) ${!isHardwareZoomSupported && videoTransform.zoom && videoTransform.zoom > 1 ? ` scale(${videoTransform.zoom})` : ''}`,
-          transition: 'transform 0.1s ease-out',
+          transform: `rotate(${videoTransform.rotation}deg) scaleX(${videoTransform.mirrorX ? -1 : 1}) scaleY(${videoTransform.mirrorY ? -1 : 1})${!isHardwareZoomActive && videoTransform.zoom && videoTransform.zoom > 1 ? ` scale(${videoTransform.zoom})` : ''}`,
+          transition: 'transform 0.25s cubic-bezier(0.25, 1, 0.5, 1)',
           transformOrigin: 'center center',
         }}
         className={`fixed inset-0 w-full h-full object-cover transition-opacity duration-700 ${

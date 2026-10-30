@@ -263,15 +263,15 @@ export function useCamera({ enabled, quality }: UseCameraOptions) {
     }
   }, [isTorchOn]);
 
-  const applyHardwareZoom = useCallback(async (zoomValue: number) => {
+  const applyHardwareZoom = useCallback(async (zoomValue: number): Promise<boolean> => {
     const track = streamRef.current?.getVideoTracks()[0];
     if (!track) return false;
     try {
       const caps = track.getCapabilities?.() as any;
-      if (caps && 'zoom' in caps) {
-        const min = typeof caps.zoom.min === 'number' ? caps.zoom.min : 1;
-        const max = typeof caps.zoom.max === 'number' ? caps.zoom.max : 5;
-        // Direct, true 1:1 camera sensor zoom: 1.5x is exactly 1.5x, 2x is 2.0x, 5x is 5.0x
+      if (caps && 'zoom' in caps && typeof caps.zoom.min === 'number' && typeof caps.zoom.max === 'number') {
+        const min = caps.zoom.min;
+        const max = caps.zoom.max;
+        // Clamped true camera optical/sensor zoom
         const target = Math.min(max, Math.max(min, zoomValue));
         await track.applyConstraints({
           advanced: [{ zoom: target } as any],
@@ -279,7 +279,7 @@ export function useCamera({ enabled, quality }: UseCameraOptions) {
         return true;
       }
     } catch (err) {
-      console.debug('Hardware zoom constraint not supported or failed', err);
+      console.warn('[useCamera] Native hardware zoom failed:', err);
     }
     return false;
   }, []);

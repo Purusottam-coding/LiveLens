@@ -82,12 +82,12 @@ export default function Controls({
 
   const handleZoomIn = () => {
     const current = videoTransform.zoom || 1;
-    handleSetZoom(Math.min(5, current + 0.5));
+    handleSetZoom(Math.min(5, current + 0.2));
   };
 
   const handleZoomOut = () => {
     const current = videoTransform.zoom || 1;
-    handleSetZoom(Math.max(1, current - 0.5));
+    handleSetZoom(Math.max(1, current - 0.2));
   };
 
   const handleResetTransform = () => {
