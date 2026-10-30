@@ -34,6 +34,7 @@ export function useCamera({ enabled, quality }: UseCameraOptions) {
   const [isTorchOn, setIsTorchOn] = useState(false);
   const [isTorchSupported, setIsTorchSupported] = useState(false);
   const [zoomCapabilities, setZoomCapabilities] = useState<{ min: number; max: number; step: number } | null>(null);
+  const [isHardwareZoomSupported, setIsHardwareZoomSupported] = useState(false);
   const [currentResolution, setCurrentResolution] = useState<{
     width: number;
     height: number;
@@ -193,8 +194,10 @@ export function useCamera({ enabled, quality }: UseCameraOptions) {
 
         if (caps?.zoom && typeof caps.zoom.min === 'number' && typeof caps.zoom.max === 'number') {
           setZoomCapabilities(caps.zoom);
+          setIsHardwareZoomSupported(true);
         } else {
           setZoomCapabilities(null);
+          setIsHardwareZoomSupported(false);
         }
       })
       .catch((err: Error) => {
@@ -268,10 +271,10 @@ export function useCamera({ enabled, quality }: UseCameraOptions) {
       if (caps && 'zoom' in caps) {
         const min = typeof caps.zoom.min === 'number' ? caps.zoom.min : 1;
         const max = typeof caps.zoom.max === 'number' ? caps.zoom.max : 5;
-        // Map zoom value (1 to 5) to camera's physical min and max
-        const target = min + ((zoomValue - 1) / 4) * (max - min);
+        // Direct, true 1:1 camera sensor zoom: 1.5x is exactly 1.5x, 2x is 2.0x, 5x is 5.0x
+        const target = Math.min(max, Math.max(min, zoomValue));
         await track.applyConstraints({
-          advanced: [{ zoom: Math.min(max, Math.max(min, target)) } as any],
+          advanced: [{ zoom: target } as any],
         });
         return true;
       }

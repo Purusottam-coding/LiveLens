@@ -629,7 +629,7 @@ const cleanupPeerConnection = useCallback(() => {
         onTimeUpdate={(e) => checkVideoFramePlaying(e.currentTarget)}
         onResize={(e) => checkVideoFramePlaying(e.currentTarget)}
         style={{
-          transform: `rotate(${videoTransform.rotation}deg) scaleX(${videoTransform.mirrorX ? -1 : 1}) scaleY(${videoTransform.mirrorY ? -1 : 1}) scale(${videoTransform.zoom || 1})`,
+          transform: `rotate(${videoTransform.rotation}deg) scaleX(${videoTransform.mirrorX ? -1 : 1}) scaleY(${videoTransform.mirrorY ? -1 : 1})`,
           transition: 'transform 0.1s ease-out',
           transformOrigin: 'center center',
         }}

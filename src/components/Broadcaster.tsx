@@ -64,6 +64,7 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
     toggleTorch,
     isTorchSupported,
     applyHardwareZoom,
+    isHardwareZoomSupported,
     cameraError,
     currentResolution,
     isMicMuted,
@@ -450,7 +451,7 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
         playsInline
         muted
         style={{
-          transform: `rotate(${videoTransform.rotation}deg) scaleX(${videoTransform.mirrorX ? -1 : 1}) scaleY(${videoTransform.mirrorY ? -1 : 1}) scale(${videoTransform.zoom || 1})`,
+          transform: `rotate(${videoTransform.rotation}deg) scaleX(${videoTransform.mirrorX ? -1 : 1}) scaleY(${videoTransform.mirrorY ? -1 : 1}) ${!isHardwareZoomSupported && videoTransform.zoom && videoTransform.zoom > 1 ? ` scale(${videoTransform.zoom})` : ''}`,
           transition: 'transform 0.1s ease-out',
           transformOrigin: 'center center',
         }}
