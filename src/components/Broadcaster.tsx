@@ -281,65 +281,69 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
   const { isConnected, send } = useSignaling(activeRoomCode, handleSignalingMessage);
   sendRef.current = send;
 
-  // Handle pairing action with room pre-check
-  const handlePair = async () => {
-    const cleanCode = code.trim();
+  // Handle pairing action with resilient connection & handshake
+  const handlePair = useCallback((targetCode?: string) => {
+    const cleanCode = (targetCode || code).trim();
     if (cleanCode.length !== 6) {
       setError('Please enter a valid 6-digit code');
       setStatus('error');
       return;
     }
+    setCode(cleanCode);
     setError('');
     setStatus('pairing');
+    statusRef.current = 'pairing';
 
-    // 1. Verify with server that this room is actively open on a projector screen!
-    try {
-      const checkRes = await fetch(`/api/rooms/${cleanCode}/check`);
-      if (checkRes.ok) {
-        const checkData = (await checkRes.json()) as { exists: boolean };
-        if (!checkData.exists) {
-          setStatus('error');
-          setError(`No projector screen found with code ${cleanCode}. Please enter the code currently displayed on your projector screen.`);
-          return;
-        }
-      } else {
-        setStatus('error');
-        setError(`No projector screen found with code ${cleanCode}. Please enter the code currently displayed on your projector screen.`);
-        return;
-      }
-    } catch (e) {
-      console.warn('Room pre-check warning:', e);
-      setStatus('error');
-      setError('Unable to reach server. Please check your internet connection.');
-      return;
-    }
+    // Soft room check in background (non-blocking) for diagnostics
+    fetch('/api/rooms/' + cleanCode + '/check')
+      .then((res) => res.json())
+      .then((data) => {
+        console.log('[Broadcaster] Room status on pairing:', data);
+      })
+      .catch((err) => {
+        console.warn('[Broadcaster] Room check network warning:', err);
+      });
 
-    // 2. Connect to room and initiate pairing handshake
+    // Connect to room WebSocket
     setActiveRoomCode(cleanCode);
 
     if (pairingTimeoutRef.current) clearTimeout(pairingTimeoutRef.current);
     pairingTimeoutRef.current = window.setTimeout(() => {
       if (statusRef.current === 'pairing') {
         setStatus('error');
-        setError(`Projector ${cleanCode} did not respond. Make sure the projector screen is open.`);
+        statusRef.current = 'error';
+        setError('Projector ' + cleanCode + ' did not respond. Make sure the projector screen is open with this code.');
       }
-    }, 6000);
-  };
+    }, 15000);
+  }, [code]);
 
-  // Send pair-request as soon as WebSocket connects
+  // Continuously attempt pairing handshake as long as status is 'pairing' and socket is connected
   useEffect(() => {
-    if (isConnected && activeRoomCode && status === 'pairing') {
-      send('peer-joined', { role: 'broadcaster' });
-      send('pair-request', { code: activeRoomCode });
-    }
+    if (!isConnected || !activeRoomCode || status !== 'pairing') return;
+
+    // Send immediate handshake
+    console.log('[Broadcaster] Sending initial pair handshake for room:', activeRoomCode);
+    send('peer-joined', { role: 'broadcaster' });
+    send('pair-request', { code: activeRoomCode });
+
+    // Retry every 1.2s to handle any packet delay or pending projector socket connection
+    const retryInterval = window.setInterval(() => {
+      if (statusRef.current === 'pairing') {
+        console.log('[Broadcaster] Retrying pair handshake for room:', activeRoomCode);
+        send('peer-joined', { role: 'broadcaster' });
+        send('pair-request', { code: activeRoomCode });
+      }
+    }, 1200);
+
+    return () => clearInterval(retryInterval);
   }, [isConnected, activeRoomCode, status, send]);
 
   // If initial code was provided (e.g. from QR scan), auto-start pairing
   useEffect(() => {
     if (initialCode && initialCode.length === 6 && status === 'idle') {
-      handlePair();
+      handlePair(initialCode);
     }
-  }, [initialCode]);
+  }, [initialCode, status, handlePair]);
 
   // Start broadcast: transition to 'streaming'
   const handleStartBroadcast = () => {

@@ -380,6 +380,7 @@ const cleanupPeerConnection = useCallback(() => {
           if (msg.payload?.role === 'broadcaster') {
             console.log('[Viewer] Broadcaster joined room');
             setIsPhonePaired(true);
+            sendRef.current('pair-ack', { code: roomCode });
             sendRef.current('peer-joined', { role: 'viewer' });
           }
         } else if (msg.type === 'video-transform') {
@@ -1053,9 +1054,13 @@ const cleanupPeerConnection = useCallback(() => {
             </p>
 
             <div className="flex items-center gap-2 text-xs text-neutral-400">
-              <span className="w-1.5 h-1.5 rounded-full bg-neutral-500" />
+              <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-emerald-400' : 'bg-neutral-500 animate-pulse'}`} />
               <span>
-                {isPhonePaired ? 'Starting camera broadcast…' : 'Waiting for phone connection…'}
+                {isPhonePaired
+                  ? 'Phone paired! Starting camera broadcast…'
+                  : isConnected
+                  ? 'Ready • Waiting for phone connection…'
+                  : 'Connecting to server…'}
               </span>
             </div>
           </div>

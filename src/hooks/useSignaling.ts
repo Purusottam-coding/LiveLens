@@ -83,15 +83,31 @@ export function useSignaling(
         console.log('[Signaling] WebSocket closed');
         setIsConnected(false);
         if (!isDisposed) {
-          reconnectTimeoutRef.current = window.setTimeout(connect, 2000);
+          reconnectTimeoutRef.current = window.setTimeout(connect, 1500);
         }
       };
     }
 
     connect();
 
+    // Reconnect immediately if tab becomes visible again or device comes back online
+    const handleReactivate = () => {
+      if (document.visibilityState === 'visible' || navigator.onLine) {
+        if (!wsRef.current || wsRef.current.readyState === WebSocket.CLOSED || wsRef.current.readyState === WebSocket.CLOSING) {
+          console.log('[Signaling] App reactivated, reconnecting signaling socket...');
+          if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+          connect();
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleReactivate);
+    window.addEventListener('online', handleReactivate);
+
     return () => {
       isDisposed = true;
+      document.removeEventListener('visibilitychange', handleReactivate);
+      window.removeEventListener('online', handleReactivate);
       if (pingInterval) clearInterval(pingInterval);
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
