@@ -12,6 +12,7 @@ import {
   ArrowLeft,
   Volume2,
   VolumeX,
+  Camera,
   Mic,
   MicOff,
 } from 'lucide-react';
@@ -72,6 +73,12 @@ export default function Viewer({ onExit }: ViewerProps = {}) {
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [isTalkbackActive, setIsTalkbackActive] = useState(false);
   const [isTalkbackMuted, setIsTalkbackMuted] = useState(false);
+  const [snapshotFlash, setSnapshotFlash] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<number | null>(null);
   const talkbackStreamRef = useRef<MediaStream | null>(null);
 
   const [videoTransform, setVideoTransform] = useState<VideoTransform>({
@@ -599,6 +606,109 @@ const cleanupPeerConnection = useCallback(() => {
     sendRef.current('peer-joined', { role: 'viewer', restart: true });
   }, [checkVideoFramePlaying]);
 
+    // Projector Snapshot: Save high-res frame to PC
+  const handleViewerSnapshot = useCallback(() => {
+    const video = remoteVideoRef.current;
+    if (!video) return;
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth || 1920;
+      canvas.height = video.videoHeight || 1080;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      ctx.save();
+      ctx.translate(canvas.width / 2, canvas.height / 2);
+      ctx.rotate((videoTransform.rotation * Math.PI) / 180);
+      ctx.scale(videoTransform.mirrorX ? -1 : 1, videoTransform.mirrorY ? -1 : 1);
+      ctx.drawImage(video, -canvas.width / 2, -canvas.height / 2, canvas.width, canvas.height);
+      ctx.restore();
+
+      setSnapshotFlash(true);
+      setTimeout(() => setSnapshotFlash(false), 200);
+
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const now = new Date();
+        const ts = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}-${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`;
+        a.href = url;
+        a.download = `LiveLens-Projector-Snapshot-${ts}.png`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }, 'image/png');
+    } catch (err) {
+      console.warn('[Viewer] Snapshot failed:', err);
+    }
+  }, [videoTransform]);
+
+  // Projector Session Recording
+  const handleViewerRecord = useCallback(() => {
+    if (isRecording) {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+      setIsRecording(false);
+      setRecordingTime(0);
+    } else {
+      const s = remoteStream;
+      if (!s) return;
+
+      try {
+        const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
+          ? 'video/webm;codecs=vp9,opus'
+          : MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')
+          ? 'video/webm;codecs=vp8,opus'
+          : MediaRecorder.isTypeSupported('video/mp4')
+          ? 'video/mp4'
+          : 'video/webm';
+
+        recordedChunksRef.current = [];
+        const recorder = new MediaRecorder(s, { mimeType });
+        mediaRecorderRef.current = recorder;
+
+        recorder.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0) {
+            recordedChunksRef.current.push(e.data);
+          }
+        };
+
+        recorder.onstop = () => {
+          const blob = new Blob(recordedChunksRef.current, { type: mimeType });
+          const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          const now = new Date();
+          const ts = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}-${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`;
+          a.href = url;
+          a.download = `LiveLens-Projector-Recording-${ts}.${ext}`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        };
+
+        recorder.start(1000);
+        setIsRecording(true);
+        setRecordingTime(0);
+
+        if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = window.setInterval(() => {
+          setRecordingTime((prev) => prev + 1);
+        }, 1000);
+      } catch (err) {
+        console.warn('[Viewer] Recording failed:', err);
+      }
+    }
+  }, [isRecording, remoteStream]);
+
   const cameraUrl = `${window.location.origin}/?role=camera&code=${roomCode}`;
   const isVideoLive = status === 'connected' || hasVideoTrack;
 
@@ -611,6 +721,11 @@ const cleanupPeerConnection = useCallback(() => {
       onDoubleClick={isFullscreen ? toggleFullscreen : undefined}
       className="min-h-screen bg-[#0a0a0a] flex flex-col relative select-none overflow-hidden touch-none"
     >
+      {/* Viewer Shutter flash animation */}
+      {snapshotFlash && (
+        <div className="fixed inset-0 z-50 bg-white/80 pointer-events-none transition-opacity duration-200" />
+      )}
+
       {/* ── Remote Fullscreen Video (Universal Mobile & Desktop Support) ── */}
       <video
         ref={remoteVideoRef}
@@ -682,7 +797,29 @@ const cleanupPeerConnection = useCallback(() => {
               <Volume2 className="w-5 h-5 text-white" />
             )}
           </button>
-                    {/* Fullscreen Talkback Mic Button */}
+                              {/* Fullscreen Snapshot */}
+          <button
+            onClick={handleViewerSnapshot}
+            title="Take HD Snapshot (Fullscreen)"
+            className="p-3 rounded-xl bg-black/75 hover:bg-black/90 text-white backdrop-blur-md border border-white/20 transition-all active:scale-95"
+          >
+            <Camera className="w-5 h-5 text-white" />
+          </button>
+
+          {/* Fullscreen Record */}
+          <button
+            onClick={handleViewerRecord}
+            title={isRecording ? 'Stop Recording' : 'Record Session'}
+            className={`p-3 rounded-xl backdrop-blur-md border transition-all active:scale-95 ${
+              isRecording
+                ? 'bg-red-600 border-red-500 text-white animate-pulse'
+                : 'bg-black/75 hover:bg-black/90 text-white border-white/20'
+            }`}
+          >
+            <div className={`w-3.5 h-3.5 rounded-full ${isRecording ? 'bg-white' : 'bg-red-500'}`} />
+          </button>
+
+          {/* Fullscreen Talkback Mic Button */}
           <button
             onClick={toggleTalkbackMic}
             title={
@@ -742,7 +879,41 @@ const cleanupPeerConnection = useCallback(() => {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3">
-                        {/* Two-Way Talkback Mic Toggle */}
+                                    {/* Snapshot Button */}
+            {isVideoLive && (
+              <button
+                type="button"
+                onClick={handleViewerSnapshot}
+                title="Take HD Snapshot (Save to PC)"
+                className="flex items-center gap-1.5 px-3 sm:px-4 py-2.5 rounded-xl backdrop-blur-md border border-white/10 bg-white/10 hover:bg-white/15 text-white text-xs sm:text-sm font-medium transition active:scale-95"
+              >
+                <Camera className="w-4 h-4 text-white" />
+                <span className="hidden sm:inline">Snapshot</span>
+              </button>
+            )}
+
+            {/* Record Session Button */}
+            {isVideoLive && (
+              <button
+                type="button"
+                onClick={handleViewerRecord}
+                title={isRecording ? 'Stop Recording' : 'Record Session'}
+                className={`flex items-center gap-1.5 px-3 sm:px-4 py-2.5 rounded-xl backdrop-blur-md border transition active:scale-95 text-xs sm:text-sm font-medium ${
+                  isRecording
+                    ? 'bg-red-600 border-red-500 text-white animate-pulse'
+                    : 'bg-white/10 hover:bg-white/15 border-white/10 text-white'
+                }`}
+              >
+                <div className={`w-2.5 h-2.5 rounded-full ${isRecording ? 'bg-white' : 'bg-red-500'}`} />
+                <span>
+                  {isRecording
+                    ? `${Math.floor(recordingTime / 60).toString().padStart(2, '0')}:${(recordingTime % 60).toString().padStart(2, '0')}`
+                    : 'Record'}
+                </span>
+              </button>
+            )}
+
+            {/* Two-Way Talkback Mic Toggle */}
             {isVideoLive && (
               <button
                 type="button"

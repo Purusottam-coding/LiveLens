@@ -41,6 +41,12 @@ interface ControlsProps {
   onQualityChange: (quality: Quality) => void;
   onEndLive: () => void;
   currentResolution?: { width: number; height: number; frameRate?: number } | null;
+  onTakeSnapshot?: () => void;
+  isRecording?: boolean;
+  recordingTime?: number;
+  onToggleRecord?: () => void;
+  isEcoDim?: boolean;
+  onToggleEcoDim?: () => void;
 }
 
 export default function Controls({
@@ -58,6 +64,12 @@ export default function Controls({
   onToggleTorch,
   onEndLive,
   currentResolution,
+  onTakeSnapshot,
+  isRecording = false,
+  recordingTime = 0,
+  onToggleRecord,
+  isEcoDim = false,
+  onToggleEcoDim,
 }: ControlsProps) {
   const [showFineZoom, setShowFineZoom] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -98,6 +110,22 @@ export default function Controls({
     <>
       {/* ── Top Bar Action Pills ── */}
       <div className="flex items-center gap-1.5 sm:gap-2">
+                {/* Battery Saver Eco-Dim Toggle */}
+        {onToggleEcoDim && (
+          <button
+            type="button"
+            onClick={onToggleEcoDim}
+            title={isEcoDim ? 'Exit Eco-Dim Mode' : 'Eco-Dim (Battery Saver)'}
+            className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center transition-all backdrop-blur-xl shadow-lg active:scale-90 ${
+              isEcoDim
+                ? 'bg-emerald-400 text-black font-bold shadow-md'
+                : 'bg-black/60 border border-white/15 text-white/90 hover:bg-black/80'
+            }`}
+          >
+            <Moon className="w-4 h-4" />
+          </button>
+        )}
+
         {/* Flashlight / Torch */}
         {isTorchSupported && (
           <button
@@ -233,53 +261,77 @@ export default function Controls({
         </div>
       </div>
 
-      {/* ── Bottom Deck Controls ── */}
-      <div className="fixed bottom-0 inset-x-0 z-20 pb-6 pt-3 px-4 sm:px-6 pointer-events-auto flex items-center justify-between gap-2 max-w-sm sm:max-w-md mx-auto select-none">
-        {/* Switch Camera (Rotation/Flip icon only, no text) */}
+      {/* ── Bottom Deck Controls (5 Clean Action Icons) ── */}
+      <div className="fixed bottom-0 inset-x-0 z-20 pb-6 pt-3 px-3 sm:px-6 pointer-events-auto flex items-center justify-between gap-1.5 sm:gap-2 max-w-sm sm:max-w-md mx-auto select-none">
+        {/* 1. Switch Camera */}
         <button
           type="button"
           onClick={onSwitchCamera}
-          className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-black/75 hover:bg-black/90 active:scale-90 backdrop-blur-xl border border-white/20 text-white shadow-2xl flex items-center justify-center transition-all shrink-0"
-          title={`Switch Camera (Currently: ${facingMode === 'user' ? 'Front' : 'Back'})`}
+          className="w-11 h-11 sm:w-13 sm:h-13 rounded-full bg-black/75 hover:bg-black/90 active:scale-90 backdrop-blur-xl border border-white/20 text-white shadow-2xl flex items-center justify-center transition-all shrink-0"
+          title={`Switch Camera (${facingMode === 'user' ? 'Front' : 'Back'})`}
         >
-          <SwitchCamera className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
+          <SwitchCamera className="w-5 h-5 text-white" />
         </button>
 
-        {/* Microphone Mute / Unmute Button (Clean monochrome: cross slash when muted, mic when unmuted) */}
+        {/* 2. Microphone Mute / Unmute */}
         {onToggleMic && (
           <button
             type="button"
             onClick={() => onToggleMic()}
-            className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-black/75 hover:bg-black/90 active:scale-90 backdrop-blur-xl border border-white/20 text-white shadow-2xl flex items-center justify-center transition-all shrink-0"
-            title={isMicMuted ? 'Microphone Muted (Tap to Unmute)' : 'Microphone Live (Tap to Mute)'}
+            className="w-11 h-11 sm:w-13 sm:h-13 rounded-full bg-black/75 hover:bg-black/90 active:scale-90 backdrop-blur-xl border border-white/20 text-white shadow-2xl flex items-center justify-center transition-all shrink-0"
+            title={isMicMuted ? 'Mic Muted' : 'Mic Live'}
           >
             {isMicMuted ? (
-              <MicOff className="w-5 h-5 sm:w-6 sm:h-6 text-white/40" />
+              <MicOff className="w-5 h-5 text-white/40" />
             ) : (
-              <Mic className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
+              <Mic className="w-5 h-5 text-white" />
             )}
           </button>
         )}
 
-        {/* End Live Broadcast */}
-        <button
-          type="button"
-          onClick={onEndLive}
-          className="flex-1 flex items-center justify-center gap-2 px-4 sm:px-6 py-3.5 sm:py-4 rounded-full bg-red-600 hover:bg-red-700 active:scale-95 text-white font-bold text-xs sm:text-sm transition-all"
-          title="End Live Stream"
-        >
-          <Square className="w-4 h-4 fill-current shrink-0" />
-          <span>End Live</span>
-        </button>
+        {/* 3. Quick Snapshot Button (Saves to Phone Gallery/Downloads) */}
+        {onTakeSnapshot && (
+          <button
+            type="button"
+            onClick={onTakeSnapshot}
+            className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-white hover:bg-neutral-200 active:scale-90 text-black shadow-2xl flex items-center justify-center transition-all shrink-0 border-4 border-white/30"
+            title="Take Snapshot and Save to Gallery"
+          >
+            <Camera className="w-6 h-6 text-black fill-current" />
+          </button>
+        )}
 
-        {/* More Settings */}
+        {/* 4. Live Session Recording */}
+        {onToggleRecord && (
+          <button
+            type="button"
+            onClick={onToggleRecord}
+            className={`h-11 sm:h-13 px-3 rounded-full flex items-center gap-1.5 backdrop-blur-xl border shadow-2xl transition-all active:scale-90 shrink-0 ${
+              isRecording
+                ? 'bg-red-600 border-red-500 text-white animate-pulse'
+                : 'bg-black/75 hover:bg-black/90 border-white/20 text-white'
+            }`}
+            title={isRecording ? 'Stop Recording' : 'Start Recording Video'}
+          >
+            <div className={`w-3.5 h-3.5 rounded-full ${isRecording ? 'bg-white' : 'bg-red-500'}`} />
+            {isRecording ? (
+              <span className="font-mono text-xs font-bold">
+                {Math.floor(recordingTime / 60).toString().padStart(2, '0')}:{(recordingTime % 60).toString().padStart(2, '0')}
+              </span>
+            ) : (
+              <span className="text-[11px] font-bold">REC</span>
+            )}
+          </button>
+        )}
+
+        {/* 5. More Settings Sheet */}
         <button
           type="button"
           onClick={() => setIsSettingsOpen(true)}
-          className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-black/75 hover:bg-black/90 active:scale-90 backdrop-blur-xl border border-white/20 text-white shadow-2xl flex items-center justify-center transition-all shrink-0"
+          className="w-11 h-11 sm:w-13 sm:h-13 rounded-full bg-black/75 hover:bg-black/90 active:scale-90 backdrop-blur-xl border border-white/20 text-white shadow-2xl flex items-center justify-center transition-all shrink-0"
           title="More Options"
         >
-          <Sliders className="w-5 h-5 sm:w-6 sm:h-6 text-slate-200" />
+          <Sliders className="w-5 h-5 text-slate-200" />
         </button>
       </div>
 
@@ -441,6 +493,19 @@ export default function Controls({
                 </div>
               )}
             </div>
+
+                        {/* End Live Broadcast (Red Button) */}
+            <button
+              type="button"
+              onClick={() => {
+                setIsSettingsOpen(false);
+                onEndLive();
+              }}
+              className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl bg-red-600 hover:bg-red-700 active:scale-98 text-white font-bold text-sm transition shadow-lg"
+            >
+              <Square className="w-4 h-4 fill-current shrink-0" />
+              <span>End Live Broadcast</span>
+            </button>
 
             <button
               type="button"

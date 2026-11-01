@@ -11,6 +11,7 @@ import {
   ArrowLeft,
   Volume2,
   VolumeX,
+  Moon,
 } from 'lucide-react';
 import { useCamera } from '../hooks/useCamera';
 import { useSignaling, SignalingMessage } from '../hooks/useSignaling';
@@ -49,6 +50,13 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
   const [hasIncomingAudio, setHasIncomingAudio] = useState(false);
   const [isIncomingAudioMuted, setIsIncomingAudioMuted] = useState(false);
   const [isHardwareZoomActive, setIsHardwareZoomActive] = useState(false);
+  const [isEcoDim, setIsEcoDim] = useState(false);
+  const [snapshotFlash, setSnapshotFlash] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<number | null>(null);
   const statusRef = useRef<Status>(status);
   statusRef.current = status;
   const pairingTimeoutRef = useRef<number | null>(null);
@@ -432,6 +440,132 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
     touchStartDistRef.current = null;
   };
 
+    // Screen WakeLock API to keep phone awake during projection
+  useEffect(() => {
+    let wakeLock: any = null;
+    const requestLock = async () => {
+      if (status === 'streaming' && 'wakeLock' in navigator) {
+        try {
+          wakeLock = await (navigator as any).wakeLock.request('screen');
+          console.log('[Broadcaster] Screen WakeLock acquired');
+        } catch (e) {
+          console.debug('[Broadcaster] Screen WakeLock unavailable', e);
+        }
+      }
+    };
+    requestLock();
+    return () => {
+      if (wakeLock) {
+        wakeLock.release().catch(() => {});
+      }
+    };
+  }, [status]);
+
+    // 1. Quick Snapshot: Capture high-res frame and save to phone gallery/downloads
+  const handleTakeSnapshot = useCallback(() => {
+    const video = localVideoRef.current;
+    if (!video) return;
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth || 1920;
+      canvas.height = video.videoHeight || 1080;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      // Draw frame with rotation and flip applied
+      ctx.save();
+      ctx.translate(canvas.width / 2, canvas.height / 2);
+      ctx.rotate((videoTransform.rotation * Math.PI) / 180);
+      ctx.scale(videoTransform.mirrorX ? -1 : 1, videoTransform.mirrorY ? -1 : 1);
+      ctx.drawImage(video, -canvas.width / 2, -canvas.height / 2, canvas.width, canvas.height);
+      ctx.restore();
+
+      // Shutter flash visual
+      setSnapshotFlash(true);
+      setTimeout(() => setSnapshotFlash(false), 200);
+
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const now = new Date();
+        const ts = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}-${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`;
+        a.href = url;
+        a.download = `LiveLens-Snapshot-${ts}.png`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }, 'image/png');
+    } catch (err) {
+      console.warn('[Broadcaster] Snapshot failed:', err);
+    }
+  }, [videoTransform]);
+
+  // 2. Live Session Recording with MediaRecorder
+  const handleToggleRecord = useCallback(() => {
+    if (isRecording) {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+      setIsRecording(false);
+      setRecordingTime(0);
+    } else {
+      const s = streamRef.current;
+      if (!s) return;
+
+      try {
+        const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
+          ? 'video/webm;codecs=vp9,opus'
+          : MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')
+          ? 'video/webm;codecs=vp8,opus'
+          : MediaRecorder.isTypeSupported('video/mp4')
+          ? 'video/mp4'
+          : 'video/webm';
+
+        recordedChunksRef.current = [];
+        const recorder = new MediaRecorder(s, { mimeType });
+        mediaRecorderRef.current = recorder;
+
+        recorder.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0) {
+            recordedChunksRef.current.push(e.data);
+          }
+        };
+
+        recorder.onstop = () => {
+          const blob = new Blob(recordedChunksRef.current, { type: mimeType });
+          const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          const now = new Date();
+          const ts = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}-${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`;
+          a.href = url;
+          a.download = `LiveLens-Recording-${ts}.${ext}`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        };
+
+        recorder.start(1000);
+        setIsRecording(true);
+        setRecordingTime(0);
+
+        if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = window.setInterval(() => {
+          setRecordingTime((prev) => prev + 1);
+        }, 1000);
+      } catch (err) {
+        console.warn('[Broadcaster] Recording failed:', err);
+      }
+    }
+  }, [isRecording]);
+
   const isLive = status === 'streaming';
 
   return (
@@ -442,6 +576,33 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
       onTouchEnd={handleTouchEnd}
       className="min-h-screen bg-[#0a0a0a] flex flex-col relative overflow-hidden touch-none select-none"
     >
+            {/* Shutter flash animation */}
+      {snapshotFlash && (
+        <div className="fixed inset-0 z-50 bg-white/80 pointer-events-none transition-opacity duration-200" />
+      )}
+
+      {/* ── Battery Saver Eco-Dim Mode (OLED Low-Power Screen) ── */}
+      {isLive && isEcoDim && (
+        <div
+          onClick={() => setIsEcoDim(false)}
+          className="fixed inset-0 z-50 bg-[#050505] flex flex-col items-center justify-center p-6 text-center select-none cursor-pointer transition-opacity duration-300"
+        >
+          <div className="w-16 h-16 rounded-3xl bg-neutral-900 border border-neutral-800 flex items-center justify-center mb-4 text-emerald-400">
+            <Moon className="w-8 h-8" />
+          </div>
+          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-neutral-900 border border-neutral-800 text-emerald-400 text-xs font-semibold mb-3">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+            <span>Eco-Dim Active • Streaming to Projector</span>
+          </div>
+          <p className="text-neutral-400 text-sm max-w-xs mb-8 leading-relaxed">
+            Screen dimmed to save battery and keep phone cool. Full projection continues on screen.
+          </p>
+          <span className="text-neutral-300 text-xs font-mono bg-neutral-900 px-4 py-2 rounded-xl border border-neutral-800">
+            Tap anywhere to wake screen
+          </span>
+        </div>
+      )}
+
       {/* Live camera video element */}
       {/* Incoming talkback audio from Projector/Viewer */}
       <audio ref={incomingAudioRef} autoPlay playsInline />
@@ -546,6 +707,12 @@ export default function Broadcaster({ initialCode = '', onExit }: BroadcasterPro
             quality={quality}
             onQualityChange={setQuality}
             onEndLive={handleStopBroadcast}
+            onTakeSnapshot={handleTakeSnapshot}
+            isRecording={isRecording}
+            recordingTime={recordingTime}
+            onToggleRecord={handleToggleRecord}
+            isEcoDim={isEcoDim}
+            onToggleEcoDim={() => setIsEcoDim((prev) => !prev)}
             currentResolution={currentResolution}
           />
         )}
